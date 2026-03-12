@@ -1,0 +1,55 @@
+{
+  "topic": "AI agents in software development 2026",
+  "search_queries": ["AI agents software development 2026 trends", "agentic coding tools productivity impact"],
+  "search_results": [
+    {
+      "query": "AI agents software development 2026 trends",
+      "url": "https://www.timesofai.com/industry-insights/agentic-coding-in-software-development/",
+      "title": "Agentic Coding in 2026 - Times of AI",
+      "content": "AI agents are now capable of independently handling end-to-end development workflows — writing, testing, debugging, and deploying code with limited human supervision."
+    },
+    {
+      "query": "AI agents software development 2026 trends",
+      "url": "https://medium.com/@huguosuo/the-agentic-shift-2025-progress-and-2026-trends-in-autonomous-ai-d8248b57ade9",
+      "title": "The Agentic Shift - Medium",
+      "content": "Multi-agent orchestration — where multiple specialized AI agents coordinate to complete complex tasks — emerged as the dominant architectural pattern across enterprise platforms."
+    },
+    {
+      "query": "agentic coding tools productivity impact",
+      "url": "https://trigidigital.com/blog/ai-coding-impact-2026/",
+      "title": "AI Coding Impact 2026 - Trigidigital",
+      "content": "Developers using AI coding tools in 2026 report an average productivity increase of 31.4%. AI-generated code now accounts for approximately 41% of all code written."
+    },
+    {
+      "query": "agentic coding tools productivity impact",
+      "url": "https://www.index.dev/blog/developer-productivity-statistics-with-ai-tools",
+      "title": "Developer Productivity Statistics - Index.dev",
+      "content": "Code quality has shown a measurable improvement of 3.4% with AI assistance. Approximately 84-92% of developers are using or planning to integrate AI tools."
+    }
+  ],
+  "summaries": [
+    "[Agentic Coding in 2026 - Times of AI](https://www.timesofai.com/industry-insights/agentic-coding-in-software-development/)\nAI agents have evolved from code completion tools to autonomous participants in the software development lifecycle. By 2026, they independently handle end-to-end workflows including writing, testing, debugging, and deploying code. The developer role has pivoted from authoring code to directing and reviewing AI-generated output.",
+    "[The Agentic Shift - Medium](https://medium.com/@huguosuo/the-agentic-shift-2025-progress-and-2026-trends-in-autonomous-ai-d8248b57ade9)\nMulti-agent orchestration has become the dominant architectural pattern in enterprise software development. Four major platforms — Anthropic's Claude, OpenAI's ChatGPT Agent, Cursor, and Manus — have matured from proof-of-concept to enterprise-ready tools. 2026 marks the year agentic AI ambition meets operational reality.",
+    "[AI Coding Impact 2026 - Trigidigital](https://trigidigital.com/blog/ai-coding-impact-2026/)\nDevelopers report a 31.4% average productivity increase with AI tools, with gains varying 20-55% depending on task type. AI-generated code accounts for ~41% of all code written, with projections suggesting up to 90% in certain contexts. A notable paradox exists between perceived and actual productivity gains.",
+    "[Developer Productivity Statistics - Index.dev](https://www.index.dev/blog/developer-productivity-statistics-with-ai-tools)\nCode quality has improved 3.4% with AI assistance and developers report faster iteration cycles. AI tool adoption has reached near-universal penetration at 84-92% of developers. The productivity gains are substantial but complicated by quality assurance bottlenecks."
+  ],
+  "draft": "# AI Agents in Software Development 2026: From Copilot to Autonomous Colleague\n\nThe software development industry is undergoing its most fundamental structural transformation in decades. What began as AI-assisted autocomplete has evolved into fully autonomous coding agents capable of writing, testing, debugging, and deploying software with minimal human intervention. By 2026, AI agents have shifted from experimental novelties to production-grade infrastructure — reshaping developer roles, redefining productivity benchmarks, and introducing complex new challenges in security, compliance, and quality assurance.\n\n## The Agentic Shift: From Tool to Autonomous Participant\n\nThe transition from generative AI models to agentic systems represents the defining technology story of the mid-2020s. In 2025, the industry crossed a critical inflection point: AI stopped being merely a tool developers reached for and started functioning as an autonomous participant in the software development lifecycle.\n\nMulti-agent orchestration — where multiple specialized AI agents coordinate to complete complex, multi-step tasks — emerged as the dominant architectural pattern across enterprise platforms ([The Agentic Shift, Medium](https://medium.com/@huguosuo/the-agentic-shift-2025-progress-and-2026-trends-in-autonomous-ai-d8248b57ade9)). Four platforms drove this evolution most visibly: Anthropic's Claude, OpenAI's ChatGPT Agent, Cursor, and Manus.\n\nIn practical terms, AI agents now independently handle end-to-end development workflows — not just completing a function stub, but progressing through writing, testing, debugging, and deploying code with limited human supervision ([Agentic Coding in 2026, Times of AI](https://www.timesofai.com/industry-insights/agentic-coding-in-software-development/)). The developer's role has pivoted from authoring software line by line to directing, reviewing, and optimizing AI-generated output.\n\n## The Productivity Picture: Real Gains, Real Paradoxes\n\nThe productivity story is genuinely compelling but more complicated than headline numbers suggest. Developers using AI coding tools report an average productivity increase of 31.4%, with gains varying between 20-55% depending on task type, developer experience, and tooling configuration ([AI Coding Impact 2026, Trigidigital](https://trigidigital.com/blog/ai-coding-impact-2026/)). Code quality has shown a measurable improvement of 3.4% with AI assistance ([Developer Productivity Statistics, Index.dev](https://www.index.dev/blog/developer-productivity-statistics-with-ai-tools)).\n\nYet two significant paradoxes complicate the narrative. First, there is a gap between *perceived* and *actual* productivity — developers consistently feel faster than objective measurements confirm. Second, AI agents enable 5-10x more code volume, creating proportional increases in bugs even if the defect rate per line remains constant.\n\nAI-generated code now accounts for approximately 41% of all code written, with some projections suggesting up to 90% in certain development contexts. AI tool adoption has reached near-universal penetration at 84-92% of developers.\n\n## The Quality Assurance Challenge\n\nThe volume amplification created by AI coding agents has made autonomous QA tooling a necessity rather than a luxury. AI-generated tests frequently share the same fundamental misunderstandings as the code they validate, undermining automated testing as a safety net.\n\nThe emerging best practice combines automated QA pipelines for AI-generated code with human decision-making checkpoints for final ship/no-ship determinations. This ensures speed gains do not silently erode software quality.\n\n## Conclusion\n\nAI agents in software development have crossed the threshold from experimental to essential in 2026. The productivity gains are real — 31.4% on average — but they come with genuine complexity around quality assurance, developer role evolution, and the gap between perceived and actual output improvements. The organizations that will thrive are those building robust validation layers around their AI-assisted workflows rather than simply maximizing code generation speed.\n\n## Sources\n\n- https://www.timesofai.com/industry-insights/agentic-coding-in-software-development/\n- https://medium.com/@huguosuo/the-agentic-shift-2025-progress-and-2026-trends-in-autonomous-ai-d8248b57ade9\n- https://trigidigital.com/blog/ai-coding-impact-2026/\n- https://www.index.dev/blog/developer-productivity-statistics-with-ai-tools",
+  "reflection": "The draft comprehensively covers the topic with specific evidence and examples.",
+  "scores": {
+    "quality": 4.2,
+    "relevance": 4.5,
+    "groundedness": 3.1
+  },
+  "node_timings": {
+    "planner": 1674,
+    "summariser": 89294,
+    "drafter": 41191,
+    "reflection": 8155
+  },
+  "token_counts": {
+    "planner": { "input": 120, "output": 45 },
+    "summariser": { "input": 4800, "output": 1200 },
+    "drafter": { "input": 2400, "output": 3600 },
+    "reflection": { "input": 4200, "output": 85 }
+  }
+}
