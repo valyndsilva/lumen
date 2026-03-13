@@ -68,30 +68,98 @@ Lumen is an AI-powered research agent that takes a topic, searches the web, synt
 
 ### Research Flow
 
-1. User enters a topic → frontend calls `POST /api/research`
-2. Backend creates a `run_id`, initialises `AgentState`, begins streaming SSE
-3. Each node completes → `node_complete` event with timing and iteration metadata
-4. Reflection decides: loop back to searcher (if gaps found and iteration < 1) or proceed to eval
-5. LLM judge scores the draft on quality, relevance, groundedness (1–5 scale)
-6. Run is persisted to SQLite → `complete` event streams final article + scores
-7. Frontend renders the article with score bars, source list, and "Dig Deeper" button
+```mermaid
+sequenceDiagram
+    actor User
+    participant FE as Frontend
+    participant API as FastAPI
+    participant Graph as LangGraph
+    participant Judge as LLM Judge
+    participant DB as SQLite
+
+    User->>FE: Enter topic
+    FE->>API: POST /api/research
+    API->>Graph: Initialize AgentState
+
+    loop Pipeline Nodes
+        Graph-->>API: Node complete
+        API-->>FE: SSE node_complete (timing, iteration)
+    end
+
+    Note over Graph: Reflection decides:<br/>loop back or finish
+
+    API->>Judge: Score draft (quality, relevance, groundedness)
+    Judge-->>API: Scores (1–5)
+    API->>DB: Save run + scores
+    API-->>FE: SSE complete (draft, sources, scores)
+    FE->>User: Render article + score bars + "Dig Deeper"
+```
 
 ### Refinement Flow ("Dig Deeper")
 
-1. User clicks "Dig Deeper" on a completed article
-2. Frontend calls `POST /api/research/{run_id}/refine`
-3. Backend retrieves stored state, resets iteration counter, re-runs the full pipeline
-4. New sources are accumulated alongside existing ones (via `operator.add`)
-5. New draft is scored, saved to DB (upsert), and streamed back
-6. Works in both real mode (live API calls) and mock mode (picks a different fixture)
+```mermaid
+sequenceDiagram
+    actor User
+    participant FE as Frontend
+    participant API as FastAPI
+    participant State as In-Memory State
+    participant Graph as LangGraph
+    participant DB as SQLite
+
+    User->>FE: Click "Dig Deeper"
+    FE->>API: POST /api/research/{run_id}/refine
+    API->>State: Retrieve previous state
+    API->>Graph: Re-run pipeline (iteration reset)
+
+    Note over Graph: New sources accumulate<br/>via operator.add
+
+    loop Pipeline Nodes
+        Graph-->>API: Node complete
+        API-->>FE: SSE node_complete
+    end
+
+    API->>DB: Upsert run (INSERT OR REPLACE)
+    API-->>FE: SSE complete (refined draft + new scores)
+```
+
+### LangGraph Pipeline
+
+```mermaid
+graph LR
+    A[Planner<br/><small>Haiku 4.5</small>] --> B[Searcher<br/><small>Tavily API</small>]
+    B --> C[Summariser<br/><small>Sonnet 4.6</small>]
+    C --> D[Drafter<br/><small>Sonnet 4.6</small>]
+    D --> E[Reflection<br/><small>Haiku 4.5</small>]
+    E -->|gaps found &<br/>iteration < 1| B
+    E -->|done| F[LLM Judge<br/><small>Sonnet 4.6</small>]
+    F --> G[(SQLite)]
+
+    style A fill:#1a1a2e,stroke:#e2a43b,color:#e5e5e5
+    style B fill:#1a1a2e,stroke:#60a5fa,color:#e5e5e5
+    style C fill:#1a1a2e,stroke:#e2a43b,color:#e5e5e5
+    style D fill:#1a1a2e,stroke:#e2a43b,color:#e5e5e5
+    style E fill:#1a1a2e,stroke:#e2a43b,color:#e5e5e5
+    style F fill:#1a1a2e,stroke:#34d399,color:#e5e5e5
+    style G fill:#1a1a2e,stroke:#a3a3a3,color:#e5e5e5
+```
 
 ### Mock Mode (Zero-Cost Development)
 
-1. Set `LUMEN_MOCK=true` in `backend/.env`
-2. Backend loads topic-matched fixtures from `backend/fixtures/mock_*.json`
-3. Falls back to `mock_response.json` if no topic match exists
-4. SSE events stream with simulated delays for realistic UI testing
-5. Auto-dump real runs as fixtures with `LUMEN_DUMP_FIXTURES=true`
+```mermaid
+flowchart TD
+    A[LUMEN_MOCK=true] --> B{Topic matches fixture?}
+    B -->|Yes| C[Load mock_topic.json]
+    B -->|No| D[Load mock_response.json<br/><small>default fallback</small>]
+    C --> E[Stream with simulated delays]
+    D --> E
+    E --> F[Store in memory for refine]
+
+    G[LUMEN_DUMP_FIXTURES=true] --> H[Run real pipeline]
+    H --> I[Auto-save as mock_slug.json]
+
+    style A fill:#1a1a2e,stroke:#e2a43b,color:#e5e5e5
+    style G fill:#1a1a2e,stroke:#34d399,color:#e5e5e5
+```
 
 ### Eval Dashboard
 
