@@ -264,21 +264,10 @@ async def stream_agent(topic: str):
 
 
 async def stream_refine_mock(run_id: str):
-    """Simulate a refinement using a different fixture."""
-    import random
+    """Simulate a refinement by re-streaming the same fixture data."""
     state = _run_states.get(run_id)
     if not state:
         raise HTTPException(status_code=404, detail="Run not found or expired")
-
-    # Pick a different fixture than the current one
-    fixtures_dir = Path(__file__).parent / "fixtures"
-    fixture_files = sorted(fixtures_dir.glob("mock_*.json"))
-    candidates = []
-    for f in fixture_files:
-        data = json.loads(f.read_text())
-        if data.get("topic", "").lower() != state["topic"].lower():
-            candidates.append(data)
-    mock = random.choice(candidates) if candidates else json.loads(fixture_files[0].read_text())
 
     def send(event: str, data: dict):
         return f"event: {event}\ndata: {json.dumps(data)}\n\n"
@@ -291,37 +280,27 @@ async def stream_refine_mock(run_id: str):
         await asyncio.sleep(delays.get(node, 0.3))
         yield send("node_complete", {
             "node": node,
-            "timing_ms": mock["node_timings"].get(node),
+            "timing_ms": state.get("node_timings", {}).get(node),
             "iteration": 1,
         })
 
     yield send("eval_start", {})
     await asyncio.sleep(0.5)
 
-    sources = [r["url"] for r in mock["search_results"]]
-    scores = mock["scores"]
+    sources = [r["url"] for r in state.get("search_results", [])]
+    scores = state.get("scores", {"quality": 4.0, "relevance": 4.0, "groundedness": 4.0})
 
     await save_run(
-        run_id, state["topic"], mock["draft"],
-        scores, mock["node_timings"], mock["token_counts"],
+        run_id, state["topic"], state["draft"],
+        scores, state.get("node_timings", {}), state.get("token_counts", {}),
     )
 
-    _run_states[run_id] = {
-        **state,
-        "draft": mock["draft"],
-        "search_results": mock["search_results"],
-        "summaries": mock.get("summaries", []),
-        "scores": scores,
-        "node_timings": mock["node_timings"],
-        "token_counts": mock["token_counts"],
-    }
-
     yield send("complete", {
-        "draft": mock["draft"],
+        "draft": state["draft"],
         "sources": sources,
         "scores": scores,
-        "node_timings": mock["node_timings"],
-        "token_counts": mock["token_counts"],
+        "node_timings": state.get("node_timings", {}),
+        "token_counts": state.get("token_counts", {}),
         "run_id": run_id,
     })
 
