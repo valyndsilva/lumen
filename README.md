@@ -6,7 +6,7 @@ Lumen is an AI-powered research agent that takes a topic, searches the web, synt
 
 ## Key Technical Decisions
 
-**LangGraph over prompt chaining**: The research pipeline is a state machine, not a linear chain. Each node (planner, searcher, summariser, drafter, reflection) reads and writes to a shared `AgentState`, enabling conditional looping — the reflection node can route back to the searcher if it identifies gaps. This makes the system self-correcting without hardcoding iteration counts.
+**LangGraph over prompt chaining**: The research pipeline is a state machine, not a linear chain. Each node (planner, searcher, summariser, drafter, reflection) reads and writes to a shared `AgentState`. The graph supports conditional looping — the reflection node *can* route back to the searcher if it identifies gaps — but the default is capped at a single pass. Instead of letting the LLM autonomously decide to spend more tokens, the user reviews the first result and its quality scores, then explicitly triggers refinement via "Dig Deeper". This keeps cost and latency predictable while preserving the iterative architecture for when the user decides it's worth it.
 
 **Streaming SSE over WebSockets**: Research runs take 30-90 seconds. SSE gives the frontend real-time node-by-node progress (timing, iteration count) without the connection management overhead of WebSockets. The tradeoff: SSE is unidirectional, so cancellation requires a separate mechanism — acceptable here since runs are short-lived.
 
