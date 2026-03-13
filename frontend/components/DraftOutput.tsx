@@ -9,6 +9,9 @@ interface DraftOutputProps {
   draft: string
   sources: string[]
   scores?: EvalScores
+  onRefine?: () => void
+  isRefining?: boolean
+  isMockMode?: boolean
 }
 
 function ScoreBar({ label, value, color, delay }: { label: string; value: number; color: string; delay: number }) {
@@ -33,7 +36,7 @@ function ScoreBar({ label, value, color, delay }: { label: string; value: number
   )
 }
 
-export default function DraftOutput({ draft, sources, scores }: DraftOutputProps) {
+export default function DraftOutput({ draft, sources, scores, onRefine, isRefining, isMockMode }: DraftOutputProps) {
   const [copied, setCopied] = useState(false)
 
   const draftWithoutSources = draft.replace(/\n##\s+Sources\s*\n[\s\S]*$/, '')
@@ -66,12 +69,23 @@ export default function DraftOutput({ draft, sources, scores }: DraftOutputProps
           <h2 className="text-[11px] font-medium text-text-muted uppercase tracking-[0.2em] font-(family-name:--font-dm-mono)">
             Article
           </h2>
-          <button
-            onClick={handleCopy}
-            className="text-[11px] text-text-muted hover:text-text-primary bg-bg-elevated hover:bg-border-subtle px-3 py-1.5 rounded-md transition-all duration-200 font-(family-name:--font-dm-mono)"
-          >
-            {copied ? 'Copied' : 'Copy'}
-          </button>
+          <div className="flex items-center gap-2">
+            {onRefine && (
+              <button
+                onClick={onRefine}
+                disabled={isRefining}
+                className="text-[11px] text-accent-amber hover:text-text-primary bg-accent-amber-dim hover:bg-accent-amber/20 px-3 py-1.5 rounded-md transition-all duration-200 font-(family-name:--font-dm-mono) disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {isRefining ? 'Refining...' : 'Dig Deeper'}
+              </button>
+            )}
+            <button
+              onClick={handleCopy}
+              className="text-[11px] text-text-muted hover:text-text-primary bg-bg-elevated hover:bg-border-subtle px-3 py-1.5 rounded-md transition-all duration-200 font-(family-name:--font-dm-mono)"
+            >
+              {copied ? 'Copied' : 'Copy'}
+            </button>
+          </div>
         </div>
 
         <div className="prose-lumen">

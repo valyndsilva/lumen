@@ -39,7 +39,7 @@ async def save_run(run_id: str, topic: str, draft: str, scores: dict,
 
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
-            INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+            INSERT OR REPLACE INTO runs VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
         """, (
             run_id, topic, datetime.now(timezone.utc).isoformat(), draft,
             scores.get("quality"), scores.get("relevance"), scores.get("groundedness"),

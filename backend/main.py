@@ -18,6 +18,9 @@ from evals.store import init_db, save_run, get_all_runs
 
 MOCK_MODE = os.environ.get("LUMEN_MOCK", "false").lower() == "true"
 
+# In-memory store for run states (enables refine/dig-deeper)
+_run_states: dict[str, dict] = {}
+
 
 # --- Rate limiter ---
 
@@ -116,10 +119,23 @@ async def healthz():
     return {"status": "ok"}
 
 
+def _load_mock_fixture(topic: str) -> dict:
+    """Load a fixture matching the topic, or fall back to the default."""
+    fixtures_dir = Path(__file__).parent / "fixtures"
+    fixture_files = sorted(fixtures_dir.glob("mock_*.json"))
+    # Try to find a fixture whose topic matches
+    for f in fixture_files:
+        data = json.loads(f.read_text())
+        if data.get("topic", "").lower() == topic.lower():
+            return data
+    # No match — use default fixture
+    default = fixtures_dir / "mock_response.json"
+    return json.loads(default.read_text())
+
+
 async def stream_mock(topic: str):
     """Stream a pre-recorded fixture response. Zero API calls."""
-    fixture_path = Path(__file__).parent / "fixtures" / "mock_response.json"
-    mock = json.loads(fixture_path.read_text())
+    mock = _load_mock_fixture(topic)
     run_id = str(uuid.uuid4())
 
     def send(event: str, data: dict):
@@ -149,6 +165,20 @@ async def stream_mock(topic: str):
         run_id, topic, mock["draft"],
         scores, mock["node_timings"], mock["token_counts"],
     )
+
+    # Store state for potential refinement
+    _run_states[run_id] = {
+        "topic": topic,
+        "search_queries": mock.get("search_queries", []),
+        "search_results": mock["search_results"],
+        "summaries": mock.get("summaries", []),
+        "draft": mock["draft"],
+        "reflection": mock.get("reflection", ""),
+        "should_continue": False,
+        "iteration": 1,
+        "node_timings": mock["node_timings"],
+        "token_counts": mock["token_counts"],
+    }
 
     yield send("complete", {
         "draft": mock["draft"],
@@ -202,6 +232,27 @@ async def stream_agent(topic: str):
         scores, state.get("node_timings", {}), state.get("token_counts", {}),
     )
 
+    # Dump fixture for mock reuse
+    if os.environ.get("LUMEN_DUMP_FIXTURES", "false").lower() == "true":
+        fixture = {
+            "topic": topic,
+            "search_queries": state.get("search_queries", []),
+            "search_results": state.get("search_results", []),
+            "summaries": state.get("summaries", []),
+            "draft": state.get("draft", ""),
+            "reflection": state.get("reflection", ""),
+            "scores": scores,
+            "node_timings": state.get("node_timings", {}),
+            "token_counts": state.get("token_counts", {}),
+        }
+        slug = topic.lower().replace(" ", "_")[:40]
+        dump_path = Path(__file__).parent / "fixtures" / f"mock_{slug}.json"
+        dump_path.write_text(json.dumps(fixture, indent=2))
+        print(f"[fixture] Saved to {dump_path}")
+
+    # Store state for potential refinement
+    _run_states[run_id] = dict(state)
+
     yield send("complete", {
         "draft": state.get("draft", ""),
         "sources": sources,
@@ -210,6 +261,122 @@ async def stream_agent(topic: str):
         "token_counts": state.get("token_counts", {}),
         "run_id": run_id,
     })
+
+
+async def stream_refine_mock(run_id: str):
+    """Simulate a refinement using a different fixture."""
+    import random
+    state = _run_states.get(run_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Run not found or expired")
+
+    # Pick a different fixture than the current one
+    fixtures_dir = Path(__file__).parent / "fixtures"
+    fixture_files = sorted(fixtures_dir.glob("mock_*.json"))
+    candidates = []
+    for f in fixture_files:
+        data = json.loads(f.read_text())
+        if data.get("topic", "").lower() != state["topic"].lower():
+            candidates.append(data)
+    mock = random.choice(candidates) if candidates else json.loads(fixture_files[0].read_text())
+
+    def send(event: str, data: dict):
+        return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+    yield send("start", {"run_id": run_id, "topic": state["topic"]})
+
+    nodes = ["planner", "searcher", "summariser", "drafter", "reflection"]
+    delays = {"planner": 0.3, "searcher": 0.5, "summariser": 1.0, "drafter": 0.8, "reflection": 0.3}
+    for node in nodes:
+        await asyncio.sleep(delays.get(node, 0.3))
+        yield send("node_complete", {
+            "node": node,
+            "timing_ms": mock["node_timings"].get(node),
+            "iteration": 1,
+        })
+
+    yield send("eval_start", {})
+    await asyncio.sleep(0.5)
+
+    sources = [r["url"] for r in mock["search_results"]]
+    scores = mock["scores"]
+
+    await save_run(
+        run_id, state["topic"], mock["draft"],
+        scores, mock["node_timings"], mock["token_counts"],
+    )
+
+    _run_states[run_id] = {
+        **state,
+        "draft": mock["draft"],
+        "search_results": mock["search_results"],
+        "summaries": mock.get("summaries", []),
+        "scores": scores,
+        "node_timings": mock["node_timings"],
+        "token_counts": mock["token_counts"],
+    }
+
+    yield send("complete", {
+        "draft": mock["draft"],
+        "sources": sources,
+        "scores": scores,
+        "node_timings": mock["node_timings"],
+        "token_counts": mock["token_counts"],
+        "run_id": run_id,
+    })
+
+
+async def stream_refine_real(run_id: str):
+    """Run one additional iteration on an existing research run."""
+    state = _run_states.get(run_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Run not found or expired")
+
+    # Reset iteration so the graph can run a full pass
+    state["should_continue"] = False
+    state["iteration"] = 0
+
+    def send(event: str, data: dict):
+        return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+    yield send("start", {"run_id": run_id, "topic": state["topic"]})
+
+    try:
+        # Run through the graph again (full pipeline)
+        async for chunk in lumen_graph.astream(state, stream_mode="updates"):
+            for node_name, node_output in chunk.items():
+                state.update(node_output)
+                yield send("node_complete", {
+                    "node": node_name,
+                    "timing_ms": node_output.get("node_timings", {}).get(node_name),
+                    "iteration": state.get("iteration", 0),
+                })
+                await asyncio.sleep(0)
+
+        # Re-evaluate
+        yield send("eval_start", {})
+        sources = [r["url"] for r in state.get("search_results", [])]
+        scores = score_draft(state["topic"], state.get("draft", ""), sources)
+        await save_run(
+            run_id, state["topic"], state.get("draft", ""),
+            scores, state.get("node_timings", {}), state.get("token_counts", {}),
+        )
+
+        # Update stored state
+        _run_states[run_id] = dict(state)
+
+        yield send("complete", {
+            "draft": state.get("draft", ""),
+            "sources": sources,
+            "scores": scores,
+            "node_timings": state.get("node_timings", {}),
+            "token_counts": state.get("token_counts", {}),
+            "run_id": run_id,
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        yield send("error", {"detail": str(e)})
 
 
 @app.post("/api/research")
@@ -221,6 +388,28 @@ async def research(req: ResearchRequest, request: Request):
             detail="Rate limit exceeded. Maximum 5 research requests per minute.",
         )
     streamer = stream_mock(req.topic) if MOCK_MODE else stream_agent(req.topic)
+    return StreamingResponse(
+        streamer,
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "X-RateLimit-Remaining": str(research_limiter.remaining(client_ip)),
+        },
+    )
+
+
+@app.post("/api/research/{run_id}/refine")
+async def refine(run_id: str, request: Request):
+    client_ip = get_client_ip(request)
+    if not research_limiter.is_allowed(client_ip):
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded. Maximum 5 research requests per minute.",
+        )
+    if run_id not in _run_states:
+        raise HTTPException(status_code=404, detail="Run not found or expired")
+    streamer = stream_refine_mock(run_id) if MOCK_MODE else stream_refine_real(run_id)
     return StreamingResponse(
         streamer,
         media_type="text/event-stream",

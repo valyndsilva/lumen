@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'motion/react'
 import ResearchForm from '@/components/ResearchForm'
 import TracePanel from '@/components/TracePanel'
 import DraftOutput from '@/components/DraftOutput'
-import { streamResearch } from '@/lib/api'
+import { streamResearch, streamRefine } from '@/lib/api'
 import type { TraceNode, NodeName, RunResult } from '@/lib/types'
 import Link from 'next/link'
 
@@ -32,6 +32,7 @@ export default function Home() {
   const [isRunning, setIsRunning] = useState(false)
   const [isEvaluating, setIsEvaluating] = useState(false)
   const [currentNode, setCurrentNode] = useState<NodeName | null>(null)
+  const [isRefining, setIsRefining] = useState(false)
 
   const handleSubmit = useCallback(async (topic: string) => {
     setIsRunning(true)
@@ -96,6 +97,59 @@ export default function Home() {
     }
   }, [])
 
+  const handleRefine = useCallback(async () => {
+    if (!result?.run_id) return
+    setIsRefining(true)
+    setIsEvaluating(false)
+
+    const fresh = makeInitialNodes()
+    fresh[0].status = 'running'
+    setNodes(fresh)
+    setCurrentNode('planner')
+
+    try {
+      for await (const event of streamRefine(result.run_id)) {
+        if (event.type === 'node_complete') {
+          const completedNode = event.node as NodeName
+          const nextNode = NEXT_NODE[completedNode]
+
+          setNodes(prev => {
+            const updated = prev.map(n => ({ ...n }))
+            const completedIdx = updated.findIndex(n => n.name === completedNode)
+            if (completedIdx !== -1) {
+              updated[completedIdx].status = 'complete'
+              updated[completedIdx].timing_ms = event.timing_ms ?? undefined
+              updated[completedIdx].iteration = event.iteration
+            }
+            if (nextNode) {
+              const nextIdx = updated.findIndex(n => n.name === nextNode)
+              if (nextIdx !== -1) {
+                updated[nextIdx].status = 'running'
+                updated[nextIdx].timing_ms = undefined
+              }
+              setCurrentNode(nextNode)
+            } else {
+              setCurrentNode(null)
+            }
+            return updated
+          })
+        } else if (event.type === 'eval_start') {
+          setNodes(prev => prev.map(n => ({ ...n, status: 'complete' as const })))
+          setIsEvaluating(true)
+          setCurrentNode(null)
+        } else if (event.type === 'complete') {
+          setResult(event.data)
+          setIsRefining(false)
+          setIsEvaluating(false)
+        }
+      }
+    } catch (err) {
+      console.error('Refine stream error:', err)
+      setIsRefining(false)
+      setIsEvaluating(false)
+    }
+  }, [result?.run_id])
+
   return (
     <div className="h-screen bg-bg-primary overflow-hidden">
       {/* Ambient gradient */}
@@ -159,6 +213,8 @@ export default function Home() {
                     draft={result.draft}
                     sources={result.sources}
                     scores={result.scores}
+                    onRefine={handleRefine}
+                    isRefining={isRefining}
                   />
                 </motion.div>
               ) : (
