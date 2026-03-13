@@ -18,36 +18,41 @@ Lumen is an AI-powered research agent that takes a topic, searches the web, synt
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  Frontend (Next.js 16 / React 19 / Tailwind v4)                │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌───────────────┐   │
-│  │ Research  │  │  Trace   │  │  Draft   │  │  Eval         │   │
-│  │ Form     │  │  Panel   │  │  Output  │  │  Dashboard    │   │
-│  └────┬─────┘  └────▲─────┘  └────▲─────┘  └───────▲───────┘   │
-│       │              │             │                │           │
-│       └──────────────┴─────────────┴────────────────┘           │
-│                        SSE Stream / REST                        │
-└────────────────────────────┬────────────────────────────────────┘
-                             │
-┌────────────────────────────▼────────────────────────────────────┐
-│  Backend (FastAPI / LangGraph)                                  │
-│                                                                 │
-│  POST /api/research ──────────────────────────────────────────  │
-│                                                                 │
-│   Planner ──► Searcher ──► Summariser ──► Drafter ──► Reflection│
-│   (Haiku)     (Tavily)     (Sonnet)       (Sonnet)    (Haiku)   │
-│                  ▲                                       │      │
-│                  └──────── loop (if gaps found) ─────────┘      │
-│                                                                 │
-│  POST /api/research/{run_id}/refine ── re-runs pipeline ──────  │
-│  GET  /api/evals ── returns scored runs from SQLite ──────────  │
-│                                                                 │
-│  ┌────────────┐  ┌──────────────┐  ┌──────────────────────┐    │
-│  │ LLM Judge  │  │ SQLite Store │  │ Fixture Mock System  │    │
-│  │ (Sonnet)   │  │ (evals DB)   │  │ (zero-cost dev)      │    │
-│  └────────────┘  └──────────────┘  └──────────────────────┘    │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+graph TB
+    subgraph Frontend["Frontend (Next.js 16 / React 19 / Tailwind v4)"]
+        RF[Research Form]
+        TP[Trace Panel]
+        DO[Draft Output]
+        ED[Eval Dashboard]
+    end
+
+    subgraph Backend["Backend (FastAPI / LangGraph)"]
+        subgraph Pipeline["POST /api/research"]
+            P[Planner<br/><small>Haiku 4.5</small>] --> S[Searcher<br/><small>Tavily API</small>]
+            S --> SM[Summariser<br/><small>Sonnet 4.6</small>]
+            SM --> D[Drafter<br/><small>Sonnet 4.6</small>]
+            D --> R[Reflection<br/><small>Haiku 4.5</small>]
+            R -->|gaps found| S
+        end
+        subgraph Services["Supporting Services"]
+            J[LLM Judge<br/><small>Sonnet 4.6</small>]
+            DB[(SQLite<br/>Evals DB)]
+            MK[Fixture Mock<br/>System]
+        end
+        R -->|done| J
+        J --> DB
+    end
+
+    RF -->|SSE Stream| Pipeline
+    Pipeline -->|node_complete| TP
+    Pipeline -->|complete| DO
+    DB -->|GET /api/evals| ED
+
+    style Frontend fill:#0a0a0a,stroke:#e2a43b,color:#e5e5e5
+    style Backend fill:#0a0a0a,stroke:#60a5fa,color:#e5e5e5
+    style Pipeline fill:#1a1a2e,stroke:#e2a43b,color:#e5e5e5
+    style Services fill:#1a1a2e,stroke:#a3a3a3,color:#e5e5e5
 ```
 
 ### Pipeline Nodes
