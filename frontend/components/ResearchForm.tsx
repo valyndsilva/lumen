@@ -11,6 +11,17 @@ const NODE_LABELS: Record<NodeName, string> = {
   reflection: 'Reflecting',
 }
 
+const SUGGESTED_TOPICS = [
+  { label: 'AI Agents 2026', topic: 'AI agents in software development 2026' },
+  { label: 'RAG in Production', topic: 'How does RAG work in production systems' },
+  { label: 'LLMs & Junior Devs', topic: 'The impact of LLMs on junior developer hiring and career paths' },
+  { label: 'Open Source AI', topic: 'Why open source AI models are challenging proprietary ones' },
+  { label: 'Remote Work', topic: 'Remote work culture and its effect on software team productivity' },
+  { label: 'Edge Computing', topic: 'The rise of edge computing and its impact on cloud architecture' },
+  { label: 'Browser IDEs', topic: 'The future of browser-based development environments' },
+  { label: 'AI in Healthcare', topic: 'How AI is transforming healthcare diagnostics in 2026' },
+]
+
 interface ResearchFormProps {
   onSubmit: (topic: string) => void
   isRunning: boolean
@@ -51,6 +62,21 @@ export default function ResearchForm({ onSubmit, isRunning, currentNode, isEvalu
           disabled={isRunning}
           className="min-h-[80px] max-h-[120px] w-full bg-bg-elevated border border-border-default rounded-lg px-4 py-3 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent-amber/40 focus:border-accent-amber/40 resize-none disabled:opacity-40 transition-all duration-300 font-(family-name:--font-dm-sans)"
         />
+
+        {!isRunning && !topic.trim() && (
+          <div className="flex flex-wrap gap-1.5 mt-3">
+            {SUGGESTED_TOPICS.map(({ label, topic: t }) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => { setTopic(t); onSubmit(t) }}
+                className="text-[10px] px-2.5 py-1 rounded-md bg-bg-elevated border border-border-subtle text-text-secondary hover:text-accent-amber hover:border-accent-amber/30 transition-all duration-200 font-(family-name:--font-dm-mono)"
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
 
         <button
           type="submit"
