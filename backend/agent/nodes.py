@@ -17,7 +17,8 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 
-llm = ChatAnthropic(model="claude-sonnet-4-6", max_tokens=2000)
+llm_fast = ChatAnthropic(model="claude-haiku-4-5-20251001", max_tokens=1000)
+llm_heavy = ChatAnthropic(model="claude-sonnet-4-6", max_tokens=2000)
 tavily = TavilyClient(api_key=os.environ["TAVILY_API_KEY"])
 
 # --- Disk-based cache (survives server restarts) ---
@@ -57,8 +58,9 @@ def _cached_search(query: str, max_results: int = 2) -> dict:
     return result
 
 
-def _cached_llm_invoke(prompt: str):
+def _cached_llm_invoke(prompt: str, llm=None):
     """LLM invoke with disk caching for dev/testing. Disable with LUMEN_DEV_CACHE=false."""
+    llm = llm or llm_heavy
     if not DEV_CACHE_ENABLED:
         return llm.invoke(prompt)
     cache_key = hashlib.sha256(prompt.encode()).hexdigest()[:16]
@@ -95,7 +97,7 @@ def _track(state: AgentState, node: str, start: float, response) -> dict:
 def planner_node(state: AgentState) -> dict:
     start = time.time()
     prompt = PLANNER_PROMPT.format(topic=state["topic"])
-    response = _cached_llm_invoke(prompt)
+    response = _cached_llm_invoke(prompt, llm=llm_fast)
     queries = _parse_json(response.content)
     return {
         "search_queries": queries,
@@ -158,7 +160,7 @@ def reflection_node(state: AgentState) -> dict:
         draft=state["draft"],
         iteration=state.get("iteration", 0),
     )
-    response = _cached_llm_invoke(prompt)
+    response = _cached_llm_invoke(prompt, llm=llm_fast)
     result = _parse_json(response.content)
     return {
         "reflection": result.get("reason", ""),

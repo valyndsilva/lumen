@@ -5,7 +5,7 @@ import uuid
 
 
 def should_continue(state: AgentState) -> str:
-    if state.get("should_continue") and state.get("iteration", 0) < 2:
+    if state.get("should_continue") and state.get("iteration", 0) < 1:
         return "searcher"
     return "end"
 
