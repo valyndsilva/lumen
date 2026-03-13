@@ -32,19 +32,19 @@ export default function ScoreChart({ runs }: ScoreChartProps) {
       </h2>
       <ResponsiveContainer width="100%" height={260}>
         <LineChart data={data}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#1e1e2a" />
-          <XAxis dataKey="date" tick={{ fill: '#55556a', fontSize: 11 }} stroke="#2a2a3a" />
-          <YAxis domain={[0, 5]} tick={{ fill: '#55556a', fontSize: 11 }} stroke="#2a2a3a" />
+          <CartesianGrid strokeDasharray="3 3" stroke="#222222" />
+          <XAxis dataKey="date" tick={{ fill: '#737373', fontSize: 11 }} stroke="#2e2e2e" />
+          <YAxis domain={[0, 5]} tick={{ fill: '#737373', fontSize: 11 }} stroke="#2e2e2e" />
           <Tooltip
             contentStyle={{
-              backgroundColor: '#0f0f16',
-              border: '1px solid #2a2a3a',
+              backgroundColor: '#121212',
+              border: '1px solid #2e2e2e',
               borderRadius: '8px',
               fontSize: '11px',
-              color: '#e8e8ed',
+              color: '#e5e5e5',
             }}
           />
-          <Legend wrapperStyle={{ fontSize: '11px', color: '#8888a0' }} />
+          <Legend wrapperStyle={{ fontSize: '11px', color: '#a3a3a3' }} />
           <Line type="monotone" dataKey="quality" stroke="#34d399" strokeWidth={2} dot={{ r: 3, fill: '#34d399' }} />
           <Line type="monotone" dataKey="relevance" stroke="#e2a43b" strokeWidth={2} dot={{ r: 3, fill: '#e2a43b' }} />
           <Line type="monotone" dataKey="groundedness" stroke="#60a5fa" strokeWidth={2} dot={{ r: 3, fill: '#60a5fa' }} />

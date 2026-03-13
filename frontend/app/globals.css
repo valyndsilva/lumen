@@ -4,12 +4,12 @@
   --font-sans: var(--font-dm-sans);
   --font-mono: var(--font-dm-mono);
 
-  --color-bg-primary: #08080c;
-  --color-bg-surface: #0f0f16;
-  --color-bg-elevated: #16161f;
-  --color-border-subtle: #1e1e2a;
-  --color-border-default: #2a2a3a;
-  --color-text-primary: #e8e8ed;
+  --color-bg-primary: #0a0a0a;
+  --color-bg-surface: #121212;
+  --color-bg-elevated: #1a1a1a;
+  --color-border-subtle: #222222;
+  --color-border-default: #2e2e2e;
+  --color-text-primary: #e5e5e5;
   --color-text-secondary: #a3a3a3;
   --color-text-muted: #737373;
   --color-accent-amber: #e2a43b;

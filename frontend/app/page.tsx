@@ -103,10 +103,11 @@ export default function Home() {
 
       <header className="sticky top-0 z-20 border-b border-border-subtle px-6 py-3 flex items-center justify-between bg-bg-primary/80 backdrop-blur-md">
         <div className="flex items-center gap-3">
-          <div className="relative">
-            <div className="w-2 h-2 rounded-full bg-accent-amber" />
-            <div className="absolute inset-0 w-2 h-2 rounded-full bg-accent-amber animate-ping opacity-20" />
-          </div>
+          <svg width="18" height="18" viewBox="0 0 32 32" fill="none" className="shrink-0">
+            <path d="M16 4L26 16L16 28L6 16Z" stroke="#e2a43b" strokeWidth="1.5" fill="rgba(226,164,59,0.1)" />
+            <path d="M16 10L21 16L16 22L11 16Z" fill="#e2a43b" />
+            <path d="M26 16h4M2 12h6M2 20h6" stroke="#e2a43b" strokeWidth="1.5" strokeLinecap="round" opacity="0.6" />
+          </svg>
           <span className="font-semibold text-text-primary text-sm tracking-[0.15em] font-(family-name:--font-dm-sans)">
             LUMEN
           </span>
