@@ -1,8 +1,10 @@
 import { SSEEventSchema, EvalRunArraySchema } from './types'
 import type { SSEEvent, EvalRun } from './types'
 
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
+
 export async function* streamResearch(topic: string): AsyncGenerator<SSEEvent> {
-  const res = await fetch('http://localhost:8000/api/research', {
+  const res = await fetch(`${API_BASE}/api/research`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ topic }),
@@ -56,7 +58,7 @@ export async function* streamResearch(topic: string): AsyncGenerator<SSEEvent> {
 }
 
 export async function fetchEvals(): Promise<EvalRun[]> {
-  const res = await fetch('http://localhost:8000/api/evals')
+  const res = await fetch(`${API_BASE}/api/evals`)
   if (!res.ok) throw new Error(`Failed to fetch evals: ${res.status}`)
   const data = await res.json()
   return EvalRunArraySchema.parse(data)
