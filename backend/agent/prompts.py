@@ -1,90 +1,102 @@
-PLANNER_PROMPT = """You are a research planner. Given a topic, generate exactly 2 distinct, specific search queries that together would give comprehensive coverage of the topic.
+PLANNER_PROMPT = """Generate exactly 2 distinct search queries for comprehensive coverage of the topic.
 
 Topic: {topic}
 
-Return ONLY a JSON array of 2 strings matching this JSON schema:
-{{
-  "type": "array",
-  "items": {{ "type": "string" }},
-  "minItems": 2,
-  "maxItems": 2
-}}
+Return ONLY a JSON array: ["query one", "query two"]"""
 
-No explanation, no markdown fences, just the raw JSON array.
-Example: ["query one", "query two"]"""
-
-SUMMARISER_PROMPT = """You are a research summariser. Given a search result, extract the key facts, claims, and insights relevant to the research topic.
+SUMMARISER_PROMPT = """Extract key facts relevant to the topic from each source. Write 2-3 sentences per source. Be factual and specific.
 
 Topic: {topic}
-Source title: {title}
-Source URL: {url}
-Content: {content}
 
-Write a concise summary (3-5 sentences) of the most relevant information. Be factual and specific."""
+Sources:
+<sources>
+{sources}
+</sources>
 
-DRAFTER_PROMPT = """You are an expert research writer. Using the summaries below, write a well-structured, insightful article on the given topic.
+Return one summary per source, prefixed with the source number (e.g. "1. ..."). No preamble."""
+
+OUTLINER_PROMPT = """Create a structured article outline based on the research summaries. Assign sources to each section.
 
 Topic: {topic}
 
 Research summaries:
+<summaries>
 {summaries}
+</summaries>
 
-Write a complete article with:
-- A compelling title (H1)
-- An executive summary paragraph
-- 3-4 substantive sections with subheadings (H2)
-- A conclusion
-- A "Sources" section listing the URLs used
+Return a markdown outline with:
+- A proposed article title
+- 3-4 section headings (H2) with 2-3 bullet points each describing what to cover
+- For each section, note which source numbers to cite (e.g. [1, 3])
+- A brief note on the conclusion angle
 
-Be specific, cite sources inline where appropriate, and write at a professional level."""
+Keep it concise — this is a plan, not a draft."""
 
-REFLECTION_PROMPT = """You are a critical editor reviewing a research draft.
-
-Topic: {topic}
-Draft: {draft}
-Number of search iterations so far: {iteration}
-
-Assess the draft quality. Does it:
-1. Comprehensively cover the topic?
-2. Have sufficient specific evidence and examples?
-3. Make clear, well-supported claims?
-
-Return ONLY a JSON object matching this schema:
-{{
-  "type": "object",
-  "properties": {{
-    "should_continue": {{ "type": "boolean" }},
-    "reason": {{ "type": "string" }},
-    "gaps": {{ "type": "array", "items": {{ "type": "string" }} }}
-  }},
-  "required": ["should_continue", "reason"]
-}}
-
-- Set "should_continue" to true only if the draft has significant gaps AND iteration < 2.
-- Include "gaps" only when should_continue is true.
-- No markdown fences, no explanation, just the raw JSON object."""
-
-JUDGE_PROMPT = """You are an expert evaluator assessing the quality of AI-generated research content.
+DRAFTER_PROMPT = """Write a well-structured, insightful article on the topic. Follow the outline structure and use the research summaries for content.
 
 Topic: {topic}
-Draft: {draft}
-Sources used: {sources}
 
-Score the draft on three dimensions, each from 1.0 to 5.0:
+Outline:
+<outline>
+{outline}
+</outline>
 
-1. quality: Is the writing clear, well-structured, and insightful?
-2. relevance: Does it thoroughly address the topic?
-3. groundedness: Are claims supported by the provided sources?
+Research summaries:
+<summaries>
+{summaries}
+</summaries>
 
-Return ONLY a JSON object matching this schema:
-{{
-  "type": "object",
-  "properties": {{
-    "quality": {{ "type": "number", "minimum": 1, "maximum": 5 }},
-    "relevance": {{ "type": "number", "minimum": 1, "maximum": 5 }},
-    "groundedness": {{ "type": "number", "minimum": 1, "maximum": 5 }}
-  }},
-  "required": ["quality", "relevance", "groundedness"]
-}}
+Follow the outline's section plan and source assignments. Write with H1 title, executive summary, H2 sections, conclusion, and a Sources section with URLs. Cite sources inline. Professional level."""
 
-No markdown fences, no explanation, just the raw JSON object."""
+DRAFTER_REVISION_PROMPT = """Revise the draft based on editorial feedback.{new_research_section}
+
+Topic: {topic}
+
+Previous draft:
+<draft>
+{previous_draft}
+</draft>
+
+Feedback:
+<feedback>
+{critique}
+</feedback>
+
+Maintain structure (H1, summary, 3-4 H2 sections, conclusion, Sources). Focus on the specific issues raised. Cite sources inline."""
+
+REFLECTION_PROMPT = """Critique this research draft. Iteration {iteration} of {max_iterations}.
+
+Topic: {topic}
+
+Draft:
+<draft>
+{draft}
+</draft>
+
+Evaluate: coverage, evidence, structure, accuracy.
+
+Return ONLY JSON:
+{{"action": "accept|revise|research", "critique": "specific feedback", "gaps": ["search query"]}}
+
+- "accept": draft is strong, no changes needed.
+- "revise": writing issues fixable without new research.
+- "research": content gaps requiring web search. Include "gaps" with 1-2 queries.
+- If iteration >= {max_iterations}, MUST use "accept".
+
+Be specific — point to exact sections or claims."""
+
+JUDGE_PROMPT = """Score this research draft on three dimensions (1.0-5.0):
+- quality: clear, well-structured, insightful?
+- relevance: thoroughly addresses the topic?
+- groundedness: claims supported by sources?
+
+Topic: {topic}
+
+Draft:
+<draft>
+{draft}
+</draft>
+
+Sources: {sources}
+
+Return ONLY JSON: {{"quality": 4.2, "relevance": 3.8, "groundedness": 4.5}}"""

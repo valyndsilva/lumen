@@ -19,9 +19,13 @@ class AgentState(TypedDict):
     topic: str
     search_queries: List[str]
     search_results: Annotated[List[SearchResult], operator.add]
+    summarised_urls: Annotated[List[str], operator.add]  # URLs already summarised
     summaries: Annotated[List[str], operator.add]
+    outline: str
     draft: str
     reflection: str
+    reflections: Annotated[List[str], operator.add]  # accumulated critiques
+    reflection_action: str   # "accept", "revise", or "research"
     should_continue: bool
     iteration: int
     node_timings: dict          # node_name -> ms
