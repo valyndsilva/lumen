@@ -1,5 +1,5 @@
 'use client'
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
 import type { TraceStep, TracePass, NodeName, NodeMeta as NodeMetaData } from '@/lib/types'
 
@@ -118,6 +118,7 @@ interface TracePanelProps {
 }
 
 export default function TracePanel({ steps, isEvaluating, compact = false }: TracePanelProps) {
+  const [expandedPass, setExpandedPass] = useState<number | null>(null)
   const passes = useMemo(() => groupIntoPasses(steps), [steps])
   const currentPass = passes[passes.length - 1]
   const completedPasses = passes.slice(0, -1).filter(p => p.isComplete)
@@ -349,8 +350,15 @@ export default function TracePanel({ steps, isEvaluating, compact = false }: Tra
               const words = drafterStep?.meta?.words
               const actionMeta = pass.decision ? ACTION_LABELS[pass.decision.reflectionAction ?? 'accept'] : null
 
+              const isExpanded = expandedPass === pass.iteration
+              const hasCritique = !!pass.decision?.critique
+
               return (
-                <div key={`pass-${pass.iteration}`} className="px-3 py-2 rounded-lg bg-bg-elevated/50 border border-border-subtle/50">
+                <div
+                  key={`pass-${pass.iteration}`}
+                  className={`px-3 py-2 rounded-lg bg-bg-elevated/50 border border-border-subtle/50 ${hasCritique ? 'cursor-pointer hover:border-border-default transition-colors' : ''}`}
+                  onClick={() => hasCritique && setExpandedPass(isExpanded ? null : pass.iteration)}
+                >
                   <div className="flex items-center gap-2 flex-wrap">
                     <svg className="w-3 h-3 text-accent-emerald shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
@@ -378,10 +386,18 @@ export default function TracePanel({ steps, isEvaluating, compact = false }: Tra
                         · {actionMeta.label}
                       </span>
                     )}
+                    {hasCritique && (
+                      <svg
+                        className={`w-3 h-3 text-text-muted ml-auto shrink-0 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
+                        fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                      </svg>
+                    )}
                   </div>
-                  {pass.decision?.critique && (
-                    <p className="text-[10px] text-text-muted mt-1 font-(family-name:--font-dm-mono) truncate">
-                      {pass.decision.critique}
+                  {hasCritique && (
+                    <p className={`text-[10px] text-text-muted mt-1 font-(family-name:--font-dm-mono) leading-relaxed ${isExpanded ? '' : 'truncate'}`}>
+                      {pass.decision!.critique}
                     </p>
                   )}
                 </div>
