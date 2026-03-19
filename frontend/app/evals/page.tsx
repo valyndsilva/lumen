@@ -32,7 +32,7 @@ export default function EvalsPage() {
       <div className="fixed inset-0 bg-[radial-gradient(ellipse_at_top,rgba(226,164,59,0.04),transparent_70%)] pointer-events-none" />
 
       <header className="sticky top-0 z-20 border-b border-border-subtle px-6 py-3 flex items-center justify-between bg-bg-primary/80 backdrop-blur-md">
-        <div className="flex items-center gap-3">
+        <Link href="/" className="flex items-center gap-3 hover:opacity-80 transition-opacity">
           <svg width="18" height="18" viewBox="0 0 32 32" fill="none" className="shrink-0">
             <path d="M16 4L26 16L16 28L6 16Z" stroke="#e2a43b" strokeWidth="1.5" fill="rgba(226,164,59,0.1)" />
             <path d="M16 10L21 16L16 22L11 16Z" fill="#e2a43b" />
@@ -43,7 +43,7 @@ export default function EvalsPage() {
           </span>
           <span className="text-text-muted text-xs">/</span>
           <span className="text-text-secondary text-xs font-(family-name:--font-dm-mono)">evals</span>
-        </div>
+        </Link>
         <Link
           href="/"
           className="text-xs text-text-muted hover:text-accent-amber transition-colors duration-300 font-(family-name:--font-dm-mono)"

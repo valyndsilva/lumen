@@ -4,11 +4,11 @@
   --font-sans: var(--font-dm-sans);
   --font-mono: var(--font-dm-mono);
 
-  --color-bg-primary: #0a0a0a;
-  --color-bg-surface: #121212;
-  --color-bg-elevated: #1a1a1a;
-  --color-border-subtle: #222222;
-  --color-border-default: #2e2e2e;
+  --color-bg-primary: #191b22;
+  --color-bg-surface: #1f2129;
+  --color-bg-elevated: #292b33;
+  --color-border-subtle: #27272a;
+  --color-border-default: #333338;
   --color-text-primary: #e5e5e5;
   --color-text-secondary: #a3a3a3;
   --color-text-muted: #737373;

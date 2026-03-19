@@ -1,162 +1,293 @@
 'use client'
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
 import ResearchForm from '@/components/ResearchForm'
 import TracePanel from '@/components/TracePanel'
 import DraftOutput from '@/components/DraftOutput'
-import { streamResearch, streamRefine } from '@/lib/api'
-import type { TraceNode, NodeName, RunResult } from '@/lib/types'
+import ActivityFeed from '@/components/ActivityFeed'
+import ApiKeyModal from '@/components/ApiKeyModal'
+import { streamResearch, streamRefine, RateLimitExceededError } from '@/lib/api'
+import type { ApiKeys } from '@/lib/api'
+import type { TraceStep, NodeName, RunResult, ReflectionAction } from '@/lib/types'
 import Link from 'next/link'
 
-const NODE_ORDER: NodeName[] = ['planner', 'searcher', 'summariser', 'drafter', 'reflection']
+const INITIAL_PASS_NODES: NodeName[] = ['planner', 'searcher', 'summariser', 'outliner', 'drafter', 'reflection']
+const RESEARCH_LOOP_NODES: NodeName[] = ['searcher', 'summariser', 'outliner', 'drafter', 'reflection']
+const REVISE_LOOP_NODES: NodeName[] = ['drafter', 'reflection']
 
-const NEXT_NODE: Record<NodeName, NodeName | null> = {
-  planner: 'searcher',
-  searcher: 'summariser',
-  summariser: 'drafter',
-  drafter: 'reflection',
-  reflection: null,
-}
-
-function makeInitialNodes(): TraceNode[] {
-  return NODE_ORDER.map(name => ({
-    name,
-    label: name.charAt(0).toUpperCase() + name.slice(1),
+function makeInitialSteps(): TraceStep[] {
+  return INITIAL_PASS_NODES.map(name => ({
+    id: `0-${name}`,
+    type: 'node' as const,
+    node: name,
     status: 'pending' as const,
+    iteration: 0,
   }))
 }
 
+function addLoopSteps(
+  prev: TraceStep[],
+  action: ReflectionAction,
+  critique: string,
+  iteration: number,
+): TraceStep[] {
+  const steps = [...prev]
+
+  steps.push({
+    id: `decision-${iteration}`,
+    type: 'reflection_decision',
+    status: 'complete',
+    iteration: iteration - 1,
+    reflectionAction: action,
+    critique,
+  })
+
+  const loopNodes = action === 'research' ? RESEARCH_LOOP_NODES : REVISE_LOOP_NODES
+  for (const name of loopNodes) {
+    steps.push({
+      id: `${iteration}-${name}`,
+      type: 'node',
+      node: name,
+      status: 'pending',
+      iteration,
+    })
+  }
+
+  return steps
+}
+
 export default function Home() {
-  const [nodes, setNodes] = useState<TraceNode[]>(makeInitialNodes())
+  const [steps, setSteps] = useState<TraceStep[]>(makeInitialSteps())
   const [result, setResult] = useState<RunResult | null>(null)
   const [isRunning, setIsRunning] = useState(false)
   const [isEvaluating, setIsEvaluating] = useState(false)
   const [currentNode, setCurrentNode] = useState<NodeName | null>(null)
   const [isRefining, setIsRefining] = useState(false)
+  const [contentTab, setContentTab] = useState<'article' | 'activity'>('activity')
 
-  const handleSubmit = useCallback(async (topic: string) => {
+  // Restore state from sessionStorage on mount (survives navigation to /evals)
+  useEffect(() => {
+    try {
+      const saved = sessionStorage.getItem('lumen_last_run')
+      if (saved) {
+        const { result: savedResult, steps: savedSteps, tab } = JSON.parse(saved)
+        if (savedResult) setResult(savedResult)
+        if (savedSteps?.length) setSteps(savedSteps)
+        if (tab) setContentTab(tab)
+      }
+    } catch {}
+  }, [])
+
+  // Save state to sessionStorage when result changes
+  useEffect(() => {
+    if (result) {
+      try {
+        sessionStorage.setItem('lumen_last_run', JSON.stringify({
+          result,
+          steps,
+          tab: contentTab,
+        }))
+      } catch {}
+    }
+  }, [result, steps, contentTab])
+
+  // BYOK (Bring Your Own Keys) state
+  const [apiKeys, setApiKeys] = useState<ApiKeys | null>(null)
+  const [showKeyModal, setShowKeyModal] = useState(false)
+  const [rateLimitMessage, setRateLimitMessage] = useState('')
+  // Store the pending action so we can retry after keys are provided
+  const pendingAction = useRef<{ type: 'research'; topic: string } | { type: 'refine' } | null>(null)
+
+  const processNodeComplete = useCallback((
+    event: { node: string; timing_ms: number | null; iteration: number; reflection_action?: string; critique?: string; meta?: Record<string, unknown> },
+    setStepsFn: typeof setSteps,
+  ) => {
+    const completedNode = event.node as NodeName
+    const iteration = event.iteration
+
+    setStepsFn(prev => {
+      let updated = prev.map(s => ({ ...s }))
+
+      const stepId = `${iteration}-${completedNode}`
+      const stepIdx = updated.findIndex(s => s.id === stepId)
+      if (stepIdx !== -1) {
+        updated[stepIdx].status = 'complete'
+        updated[stepIdx].timing_ms = event.timing_ms ?? undefined
+        updated[stepIdx].meta = event.meta
+      }
+
+      // Mark any skipped nodes (e.g., outliner on revision loops) as complete
+      const currentIterNodes = iteration === 0 ? INITIAL_PASS_NODES :
+        (updated.some(s => s.id === `${iteration}-searcher`) ? RESEARCH_LOOP_NODES : REVISE_LOOP_NODES)
+      const completedNodeIdx = currentIterNodes.indexOf(completedNode)
+      for (let i = 0; i < completedNodeIdx; i++) {
+        const priorId = `${iteration}-${currentIterNodes[i]}`
+        const priorStep = updated.find(s => s.id === priorId)
+        if (priorStep && priorStep.status !== 'complete') {
+          priorStep.status = 'complete'
+        }
+      }
+
+      if (completedNode === 'reflection') {
+        const action = event.reflection_action as ReflectionAction | undefined
+        const critique = event.critique ?? ''
+
+        if (action && action !== 'accept') {
+          updated = addLoopSteps(updated, action, critique, iteration + 1)
+          const nextLoopNodes = action === 'research' ? RESEARCH_LOOP_NODES : REVISE_LOOP_NODES
+          const nextRunningId = `${iteration + 1}-${nextLoopNodes[0]}`
+          const nextIdx = updated.findIndex(s => s.id === nextRunningId)
+          if (nextIdx !== -1) {
+            updated[nextIdx].status = 'running'
+          }
+          setCurrentNode(nextLoopNodes[0])
+        } else {
+          updated.push({
+            id: `decision-accept-${iteration}`,
+            type: 'reflection_decision',
+            status: 'complete',
+            iteration,
+            reflectionAction: 'accept',
+            critique,
+          })
+          setCurrentNode(null)
+        }
+      } else {
+        const currentIterNodes = iteration === 0 ? INITIAL_PASS_NODES :
+          (updated.some(s => s.id === `${iteration}-searcher`) ? RESEARCH_LOOP_NODES : REVISE_LOOP_NODES)
+        const nodeIdx = currentIterNodes.indexOf(completedNode)
+        if (nodeIdx !== -1 && nodeIdx < currentIterNodes.length - 1) {
+          const nextNode = currentIterNodes[nodeIdx + 1]
+          const nextId = `${iteration}-${nextNode}`
+          const nextStepIdx = updated.findIndex(s => s.id === nextId)
+          if (nextStepIdx !== -1) {
+            updated[nextStepIdx].status = 'running'
+          }
+          setCurrentNode(nextNode)
+        }
+      }
+
+      return updated
+    })
+  }, [])
+
+  const handleSubmit = useCallback(async (topic: string, keys?: ApiKeys | null) => {
+    const effectiveKeys = keys ?? apiKeys ?? undefined
     setIsRunning(true)
     setResult(null)
     setIsEvaluating(false)
+    setContentTab('activity')
 
-    const fresh = makeInitialNodes()
-    fresh[0].status = 'running'
-    setNodes(fresh)
+    const fresh = makeInitialSteps()
+    const plannerStep = fresh.find(s => s.id === '0-planner')
+    if (plannerStep) plannerStep.status = 'running'
+    setSteps(fresh)
     setCurrentNode('planner')
 
     try {
-      for await (const event of streamResearch(topic)) {
+      for await (const event of streamResearch(topic, effectiveKeys)) {
         if (event.type === 'node_complete') {
-          const completedNode = event.node as NodeName
-          const nextNode = NEXT_NODE[completedNode]
-
-          setNodes(prev => {
-            const updated = prev.map(n => ({ ...n }))
-
-            const completedIdx = updated.findIndex(n => n.name === completedNode)
-            if (completedIdx !== -1) {
-              updated[completedIdx].status = 'complete'
-              updated[completedIdx].timing_ms = event.timing_ms ?? undefined
-              updated[completedIdx].iteration = event.iteration
-            }
-
-            if (nextNode) {
-              const nextIdx = updated.findIndex(n => n.name === nextNode)
-              if (nextIdx !== -1) {
-                updated[nextIdx].status = 'running'
-                updated[nextIdx].timing_ms = undefined
-                for (let i = nextIdx + 1; i < updated.length; i++) {
-                  updated[i].status = 'pending'
-                  updated[i].timing_ms = undefined
-                }
-              }
-              setCurrentNode(nextNode)
-            } else {
-              setCurrentNode(null)
-            }
-
-            return updated
-          })
+          processNodeComplete(event, setSteps)
         } else if (event.type === 'eval_start') {
-          setNodes(prev => prev.map(n => ({
-            ...n,
-            status: 'complete',
-          })))
           setIsEvaluating(true)
           setCurrentNode(null)
         } else if (event.type === 'complete') {
           setResult(event.data)
           setIsRunning(false)
           setIsEvaluating(false)
+          setContentTab('article')
         }
       }
     } catch (err) {
-      console.error('Research stream error:', err)
       setIsRunning(false)
       setIsEvaluating(false)
+      if (err instanceof RateLimitExceededError && (err.code === 'daily_limit' || err.code === 'global_daily_limit')) {
+        pendingAction.current = { type: 'research', topic }
+        setRateLimitMessage(err.message)
+        setShowKeyModal(true)
+      } else {
+        console.error('Research stream error:', err)
+      }
     }
-  }, [])
+  }, [processNodeComplete, apiKeys])
 
-  const handleRefine = useCallback(async () => {
+  const handleRefine = useCallback(async (keys?: ApiKeys | null) => {
     if (!result?.run_id) return
+    const effectiveKeys = keys ?? apiKeys ?? undefined
     setIsRefining(true)
     setIsEvaluating(false)
+    setContentTab('activity')
 
-    const fresh = makeInitialNodes()
-    fresh[0].status = 'running'
-    setNodes(fresh)
+    const fresh = makeInitialSteps()
+    const plannerStep = fresh.find(s => s.id === '0-planner')
+    if (plannerStep) plannerStep.status = 'running'
+    setSteps(fresh)
     setCurrentNode('planner')
 
     try {
-      for await (const event of streamRefine(result.run_id)) {
+      for await (const event of streamRefine(result.run_id, effectiveKeys)) {
         if (event.type === 'node_complete') {
-          const completedNode = event.node as NodeName
-          const nextNode = NEXT_NODE[completedNode]
-
-          setNodes(prev => {
-            const updated = prev.map(n => ({ ...n }))
-            const completedIdx = updated.findIndex(n => n.name === completedNode)
-            if (completedIdx !== -1) {
-              updated[completedIdx].status = 'complete'
-              updated[completedIdx].timing_ms = event.timing_ms ?? undefined
-              updated[completedIdx].iteration = event.iteration
-            }
-            if (nextNode) {
-              const nextIdx = updated.findIndex(n => n.name === nextNode)
-              if (nextIdx !== -1) {
-                updated[nextIdx].status = 'running'
-                updated[nextIdx].timing_ms = undefined
-              }
-              setCurrentNode(nextNode)
-            } else {
-              setCurrentNode(null)
-            }
-            return updated
-          })
+          processNodeComplete(event, setSteps)
         } else if (event.type === 'eval_start') {
-          setNodes(prev => prev.map(n => ({ ...n, status: 'complete' as const })))
           setIsEvaluating(true)
           setCurrentNode(null)
         } else if (event.type === 'complete') {
           setResult(event.data)
           setIsRefining(false)
           setIsEvaluating(false)
+          setContentTab('article')
         }
       }
     } catch (err) {
-      console.error('Refine stream error:', err)
       setIsRefining(false)
       setIsEvaluating(false)
+      if (err instanceof RateLimitExceededError && (err.code === 'daily_limit' || err.code === 'global_daily_limit')) {
+        pendingAction.current = { type: 'refine' }
+        setRateLimitMessage(err.message)
+        setShowKeyModal(true)
+      } else {
+        console.error('Refine stream error:', err)
+      }
     }
-  }, [result?.run_id])
+  }, [result?.run_id, processNodeComplete, apiKeys])
+
+  const handleKeysSubmit = useCallback((keys: ApiKeys) => {
+    setApiKeys(keys)
+    setShowKeyModal(false)
+    // Retry the pending action with the new keys
+    const action = pendingAction.current
+    pendingAction.current = null
+    if (action?.type === 'research') {
+      handleSubmit(action.topic, keys)
+    } else if (action?.type === 'refine') {
+      handleRefine(keys)
+    }
+  }, [handleSubmit, handleRefine])
+
+  const showPipeline = isRunning || isRefining || isEvaluating || result
 
   return (
-    <div className="h-screen bg-bg-primary overflow-hidden">
+    <div className="h-screen bg-bg-primary flex flex-col overflow-hidden">
       {/* Ambient gradient */}
-      <div className="fixed inset-0 bg-[radial-gradient(ellipse_at_top,rgba(226,164,59,0.04),transparent_70%)] pointer-events-none" />
+      <div className="fixed inset-0 bg-[radial-gradient(ellipse_at_top,rgba(226,164,59,0.03),transparent_70%)] pointer-events-none" />
 
-      <header className="sticky top-0 z-20 border-b border-border-subtle px-6 py-3 flex items-center justify-between bg-bg-primary/80 backdrop-blur-md">
-        <div className="flex items-center gap-3">
+      {/* BYOK modal */}
+      <AnimatePresence>
+        {showKeyModal && (
+          <ApiKeyModal
+            message={rateLimitMessage}
+            onSubmit={handleKeysSubmit}
+            onDismiss={() => {
+              setShowKeyModal(false)
+              pendingAction.current = null
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Header */}
+      <header className="relative z-20 border-b border-border-subtle px-6 py-3 flex items-center justify-between bg-bg-primary/80 backdrop-blur-md shrink-0">
+        <Link href="/" className="flex items-center gap-3 hover:opacity-80 transition-opacity">
           <svg width="18" height="18" viewBox="0 0 32 32" fill="none" className="shrink-0">
             <path d="M16 4L26 16L16 28L6 16Z" stroke="#e2a43b" strokeWidth="1.5" fill="rgba(226,164,59,0.1)" />
             <path d="M16 10L21 16L16 22L11 16Z" fill="#e2a43b" />
@@ -168,7 +299,7 @@ export default function Home() {
           <span className="text-[10px] font-(family-name:--font-dm-mono) text-text-muted tracking-wider">
             v1.0
           </span>
-        </div>
+        </Link>
         <Link
           href="/evals"
           className="text-xs text-text-muted hover:text-accent-amber transition-colors duration-300 font-(family-name:--font-dm-mono)"
@@ -177,86 +308,113 @@ export default function Home() {
         </Link>
       </header>
 
-      <main className="relative z-10 p-5 max-w-[1600px] mx-auto">
-        <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-4 h-[calc(100vh-72px)]">
-          <motion.div
-            className="min-h-0 overflow-hidden flex flex-col gap-4"
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
-          >
-            <ResearchForm
-              onSubmit={handleSubmit}
-              isRunning={isRunning}
-              currentNode={currentNode}
-              isEvaluating={isEvaluating}
-            />
-            <TracePanel nodes={nodes} isEvaluating={isEvaluating} />
-          </motion.div>
+      {/* Research input bar */}
+      <div className="relative z-10 shrink-0">
+        <ResearchForm
+          onSubmit={handleSubmit}
+          isRunning={isRunning}
+          currentNode={currentNode}
+          isEvaluating={isEvaluating}
+        />
+      </div>
 
+      {/* Pipeline stepper */}
+      <AnimatePresence>
+        {showPipeline && (
           <motion.div
-            className="min-h-0 overflow-hidden"
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ duration: 0.5, delay: 0.2, ease: [0.16, 1, 0.3, 1] }}
+            className="relative z-10 shrink-0 px-5 pb-2"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.3 }}
           >
-            <AnimatePresence mode="wait">
-              {result ? (
-                <motion.div
-                  key="result"
-                  className="h-full"
-                  initial={{ opacity: 0, scale: 0.98 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-                >
-                  <DraftOutput
-                    draft={result.draft}
-                    sources={result.sources}
-                    scores={result.scores}
-                    onRefine={handleRefine}
-                    isRefining={isRefining}
-                  />
-                </motion.div>
-              ) : (
-                <motion.div
-                  key="empty"
-                  className="surface h-full flex items-center justify-center"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                >
-                  <div className="text-center px-8">
-                    <div className="w-12 h-12 rounded-full border border-border-default mx-auto mb-5 flex items-center justify-center bg-bg-elevated">
-                      <svg className="w-5 h-5 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
-                      </svg>
-                    </div>
-                    <p className="text-sm text-text-muted font-(family-name:--font-dm-sans)">
-                      {isRunning
-                        ? 'Generating article...'
-                        : 'Enter a topic to begin research'
-                      }
-                    </p>
-                    {isRunning && (
-                      <div className="mt-4 flex justify-center">
-                        <div className="flex gap-1">
-                          {[0, 1, 2].map(i => (
-                            <motion.div
-                              key={i}
-                              className="w-1.5 h-1.5 rounded-full bg-accent-amber"
-                              animate={{ opacity: [0.3, 1, 0.3] }}
-                              transition={{ duration: 1.2, repeat: Infinity, delay: i * 0.2 }}
-                            />
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
+            <TracePanel steps={steps} isEvaluating={isEvaluating} compact={!!result} />
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Main content */}
+      <div className="relative z-10 flex-1 min-h-0 px-5 pb-5 flex flex-col">
+        {/* Tabs — show when pipeline has started */}
+        {(isRunning || isRefining || isEvaluating || result) && (
+          <div className="flex gap-1 mb-2 shrink-0">
+            <button
+              onClick={() => setContentTab('activity')}
+              className={`px-3 py-1.5 rounded-md text-[11px] font-medium transition-all duration-200 font-(family-name:--font-dm-mono) ${
+                contentTab === 'activity'
+                  ? 'bg-bg-elevated text-text-primary border border-border-default'
+                  : 'text-text-muted hover:text-text-secondary'
+              }`}
+            >
+              Activity
+            </button>
+            <button
+              onClick={() => setContentTab('article')}
+              disabled={!result}
+              className={`px-3 py-1.5 rounded-md text-[11px] font-medium transition-all duration-200 font-(family-name:--font-dm-mono) disabled:opacity-30 disabled:cursor-not-allowed ${
+                contentTab === 'article'
+                  ? 'bg-bg-elevated text-text-primary border border-border-default'
+                  : 'text-text-muted hover:text-text-secondary'
+              }`}
+            >
+              Article
+            </button>
+          </div>
+        )}
+
+        {/* Tab content */}
+        <div className="flex-1 min-h-0">
+          <AnimatePresence mode="wait">
+            {!(isRunning || isRefining || isEvaluating || result) ? (
+              <motion.div
+                key="empty"
+                className="surface h-full flex items-center justify-center"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+              >
+                <div className="text-center px-8">
+                  <div className="w-12 h-12 rounded-full border border-border-default mx-auto mb-5 flex items-center justify-center bg-bg-elevated">
+                    <svg className="w-5 h-5 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                    </svg>
+                  </div>
+                  <p className="text-sm text-text-muted font-(family-name:--font-dm-sans)">
+                    Enter a topic to begin research
+                  </p>
+                </div>
+              </motion.div>
+            ) : contentTab === 'article' && result ? (
+              <motion.div
+                key="article"
+                className="h-full"
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -4 }}
+                transition={{ duration: 0.2 }}
+              >
+                <DraftOutput
+                  draft={result.draft}
+                  sources={result.sources}
+                  scores={result.scores}
+                  onRefine={handleRefine}
+                  isRefining={isRefining}
+                />
+              </motion.div>
+            ) : (
+              <motion.div
+                key="activity"
+                className="h-full"
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -4 }}
+                transition={{ duration: 0.2 }}
+              >
+                <ActivityFeed steps={steps} isEvaluating={isEvaluating} />
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
-      </main>
+      </div>
     </div>
   )
 }
