@@ -25,6 +25,12 @@ body {
   font-family: var(--font-sans), system-ui, sans-serif;
 }
 
+/* Text selection */
+::selection {
+  background: rgba(226, 164, 59, 0.3);
+  color: var(--color-text-primary);
+}
+
 /* Custom scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
