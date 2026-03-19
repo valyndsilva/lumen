@@ -23,12 +23,13 @@ const SUGGESTED_TOPICS = [
 
 interface ResearchFormProps {
   onSubmit: (topic: string) => void
+  onCancel?: () => void
   isRunning: boolean
   currentNode: NodeName | null
   isEvaluating: boolean
 }
 
-export default function ResearchForm({ onSubmit, isRunning, currentNode, isEvaluating }: ResearchFormProps) {
+export default function ResearchForm({ onSubmit, onCancel, isRunning, currentNode, isEvaluating }: ResearchFormProps) {
   const [topic, setTopic] = useState('')
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -55,13 +56,23 @@ export default function ResearchForm({ onSubmit, isRunning, currentNode, isEvalu
           disabled={isRunning}
           className="flex-1 h-10 bg-bg-elevated border border-border-default rounded-lg px-4 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent-amber/40 focus:border-accent-amber/40 disabled:opacity-40 transition-all duration-300 font-(family-name:--font-dm-sans)"
         />
-        <button
-          type="submit"
-          disabled={isRunning || !topic.trim()}
-          className="shrink-0 h-10 px-5 rounded-lg text-sm font-medium bg-accent-amber text-bg-primary hover:shadow-[0_0_24px_rgba(226,164,59,0.25)] disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-300 font-(family-name:--font-dm-sans)"
-        >
-          {isRunning ? 'Researching...' : 'Research'}
-        </button>
+        {isRunning ? (
+          <button
+            type="button"
+            onClick={onCancel}
+            className="shrink-0 h-10 px-5 rounded-lg text-sm font-medium bg-accent-red/15 text-accent-red border border-accent-red/30 hover:bg-accent-red/25 transition-all duration-300 font-(family-name:--font-dm-sans)"
+          >
+            Stop
+          </button>
+        ) : (
+          <button
+            type="submit"
+            disabled={!topic.trim()}
+            className="shrink-0 h-10 px-5 rounded-lg text-sm font-medium bg-accent-amber text-bg-primary hover:shadow-[0_0_24px_rgba(226,164,59,0.25)] disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-300 font-(family-name:--font-dm-sans)"
+          >
+            Research
+          </button>
+        )}
       </form>
 
       {/* Status indicator */}

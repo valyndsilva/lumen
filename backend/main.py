@@ -21,6 +21,9 @@ MOCK_MODE = os.environ.get("LUMEN_MOCK", "false").lower() == "true"
 # In-memory store for run states (enables refine/dig-deeper)
 _run_states: dict[str, dict] = {}
 
+# Cancellation registry — run_ids that should stop early
+_cancelled_runs: set[str] = {}
+
 
 # --- Rate limiter ---
 
@@ -355,16 +358,24 @@ async def stream_agent(topic: str, byok_keys: dict | None = None):
     yield send("start", {"run_id": run_id, "topic": topic})
 
     # Stream through the graph
+    cancelled = False
     async for chunk in lumen_graph.astream(state, stream_mode="updates"):
+        if run_id in _cancelled_runs:
+            _cancelled_runs.discard(run_id)
+            cancelled = True
+            yield send("cancelled", {"run_id": run_id})
+            break
         for node_name, node_output in chunk.items():
             if not node_output:
                 continue
-            # Capture iteration BEFORE update — reflection increments it
             pre_iteration = state.get("iteration", 0)
             state.update(node_output)
             event_data = _build_node_event(node_name, node_output, state, pre_iteration)
             yield send("node_complete", event_data)
             await asyncio.sleep(0)  # allow flush
+
+    if cancelled:
+        return
 
     # Run evals
     yield send("eval_start", {})
@@ -469,7 +480,13 @@ async def stream_refine_real(run_id: str, byok_keys: dict | None = None):
 
     try:
         # Run through the graph again (full pipeline)
+        cancelled = False
         async for chunk in lumen_graph.astream(state, stream_mode="updates"):
+            if run_id in _cancelled_runs:
+                _cancelled_runs.discard(run_id)
+                cancelled = True
+                yield send("cancelled", {"run_id": run_id})
+                break
             for node_name, node_output in chunk.items():
                 if not node_output:
                     continue
@@ -478,6 +495,9 @@ async def stream_refine_real(run_id: str, byok_keys: dict | None = None):
                 event_data = _build_node_event(node_name, node_output, state, pre_iteration)
                 yield send("node_complete", event_data)
                 await asyncio.sleep(0)
+
+        if cancelled:
+            return
 
         # Re-evaluate
         yield send("eval_start", {})
@@ -620,6 +640,12 @@ async def refine(run_id: str, req: RefineRequest, request: Request):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@app.post("/api/research/{run_id}/cancel")
+async def cancel_research(run_id: str):
+    _cancelled_runs.add(run_id)
+    return {"status": "cancelling", "run_id": run_id}
 
 
 @app.get("/api/evals")

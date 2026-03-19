@@ -6,7 +6,7 @@ import TracePanel from '@/components/TracePanel'
 import DraftOutput from '@/components/DraftOutput'
 import ActivityFeed from '@/components/ActivityFeed'
 import ApiKeyModal from '@/components/ApiKeyModal'
-import { streamResearch, streamRefine, RateLimitExceededError } from '@/lib/api'
+import { streamResearch, streamRefine, cancelResearch, RateLimitExceededError } from '@/lib/api'
 import type { ApiKeys } from '@/lib/api'
 import type { TraceStep, NodeName, RunResult, ReflectionAction } from '@/lib/types'
 import Link from 'next/link'
@@ -97,6 +97,32 @@ export default function Home() {
   const [rateLimitMessage, setRateLimitMessage] = useState('')
   // Store the pending action so we can retry after keys are provided
   const pendingAction = useRef<{ type: 'research'; topic: string } | { type: 'refine' } | null>(null)
+  // Track active run for cancellation
+  const activeRunId = useRef<string | null>(null)
+
+  // Auto-cancel on page refresh/close
+  useEffect(() => {
+    const handleUnload = () => {
+      if (activeRunId.current) {
+        // Use sendBeacon for reliable delivery during unload
+        const url = `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'}/api/research/${activeRunId.current}/cancel`
+        navigator.sendBeacon(url)
+      }
+    }
+    window.addEventListener('beforeunload', handleUnload)
+    return () => window.removeEventListener('beforeunload', handleUnload)
+  }, [])
+
+  const handleCancel = useCallback(() => {
+    if (activeRunId.current) {
+      cancelResearch(activeRunId.current)
+      activeRunId.current = null
+      setIsRunning(false)
+      setIsRefining(false)
+      setIsEvaluating(false)
+      setCurrentNode(null)
+    }
+  }, [])
 
   const processNodeComplete = useCallback((
     event: { node: string; timing_ms: number | null; iteration: number; reflection_action?: string; critique?: string; meta?: Record<string, unknown> },
@@ -186,21 +212,29 @@ export default function Home() {
 
     try {
       for await (const event of streamResearch(topic, effectiveKeys)) {
-        if (event.type === 'node_complete') {
+        if (event.type === 'start') {
+          activeRunId.current = event.run_id
+        } else if (event.type === 'node_complete') {
           processNodeComplete(event, setSteps)
         } else if (event.type === 'eval_start') {
           setIsEvaluating(true)
           setCurrentNode(null)
+        } else if (event.type === 'cancelled') {
+          setIsRunning(false)
+          setCurrentNode(null)
+          activeRunId.current = null
         } else if (event.type === 'complete') {
           setResult(event.data)
           setIsRunning(false)
           setIsEvaluating(false)
           setContentTab('article')
+          activeRunId.current = null
         }
       }
     } catch (err) {
       setIsRunning(false)
       setIsEvaluating(false)
+      activeRunId.current = null
       if (err instanceof RateLimitExceededError && (err.code === 'daily_limit' || err.code === 'global_daily_limit')) {
         pendingAction.current = { type: 'research', topic }
         setRateLimitMessage(err.message)
@@ -226,20 +260,28 @@ export default function Home() {
 
     try {
       for await (const event of streamRefine(result.run_id, effectiveKeys)) {
-        if (event.type === 'node_complete') {
+        if (event.type === 'start') {
+          activeRunId.current = event.run_id
+        } else if (event.type === 'node_complete') {
           processNodeComplete(event, setSteps)
         } else if (event.type === 'eval_start') {
           setIsEvaluating(true)
           setCurrentNode(null)
+        } else if (event.type === 'cancelled') {
+          setIsRefining(false)
+          setCurrentNode(null)
+          activeRunId.current = null
         } else if (event.type === 'complete') {
           setResult(event.data)
           setIsRefining(false)
           setIsEvaluating(false)
           setContentTab('article')
+          activeRunId.current = null
         }
       }
     } catch (err) {
       setIsRefining(false)
+      activeRunId.current = null
       setIsEvaluating(false)
       if (err instanceof RateLimitExceededError && (err.code === 'daily_limit' || err.code === 'global_daily_limit')) {
         pendingAction.current = { type: 'refine' }
@@ -312,7 +354,8 @@ export default function Home() {
       <div className="relative z-10 shrink-0">
         <ResearchForm
           onSubmit={handleSubmit}
-          isRunning={isRunning}
+          onCancel={handleCancel}
+          isRunning={isRunning || isRefining}
           currentNode={currentNode}
           isEvaluating={isEvaluating}
         />

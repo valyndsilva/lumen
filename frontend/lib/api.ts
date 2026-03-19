@@ -64,6 +64,7 @@ function parseSSEStream(reader: ReadableStreamDefaultReader<Uint8Array>) {
           if (eventType === 'start') raw = { type: 'start', ...parsed }
           else if (eventType === 'node_complete') raw = { type: 'node_complete', ...parsed }
           else if (eventType === 'eval_start') raw = { type: 'eval_start' }
+          else if (eventType === 'cancelled') raw = { type: 'cancelled', ...parsed }
           else if (eventType === 'complete') raw = { type: 'complete', data: parsed }
           else continue
 
@@ -123,6 +124,10 @@ export async function* streamRefine(runId: string, keys?: ApiKeys): AsyncGenerat
 
   if (!res.body) throw new Error('No response body')
   yield* parseSSEStream(res.body.getReader()).events()
+}
+
+export async function cancelResearch(runId: string): Promise<void> {
+  await fetch(`${API_BASE}/api/research/${runId}/cancel`, { method: 'POST' })
 }
 
 export async function fetchEvals(): Promise<EvalRun[]> {

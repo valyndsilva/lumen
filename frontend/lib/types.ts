@@ -99,6 +99,11 @@ export const SSEEvalStartSchema = z.object({
   type: z.literal('eval_start'),
 })
 
+export const SSECancelledSchema = z.object({
+  type: z.literal('cancelled'),
+  run_id: z.string(),
+})
+
 export const SSECompleteSchema = z.object({
   type: z.literal('complete'),
   data: RunResultSchema,
@@ -108,6 +113,7 @@ export const SSEEventSchema = z.discriminatedUnion('type', [
   SSEStartSchema,
   SSENodeCompleteSchema,
   SSEEvalStartSchema,
+  SSECancelledSchema,
   SSECompleteSchema,
 ])
 export type SSEEvent = z.infer<typeof SSEEventSchema>
