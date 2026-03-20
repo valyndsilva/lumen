@@ -1,12 +1,12 @@
 import hashlib
 import json
 import pickle
+import base64
 import re
 import time
-import uuid
-from pathlib import Path
 from langchain_anthropic import ChatAnthropic
 from tavily import TavilyClient
+from upstash_redis import Redis
 from .state import AgentState, SearchResult
 from .prompts import (
     PLANNER_PROMPT, SUMMARISER_PROMPT, OUTLINER_PROMPT,
@@ -31,38 +31,93 @@ def _get_clients(state: AgentState) -> tuple:
         return (
             ChatAnthropic(model="claude-haiku-4-5-20251001", max_tokens=1000, api_key=byok_anthropic),
             ChatAnthropic(model="claude-sonnet-4-6", max_tokens=2000, api_key=byok_anthropic),
-            tavily,  # always use server's Tavily key
+            tavily,
         )
     return llm_fast, llm_heavy, tavily
 
-# --- Disk-based cache (survives server restarts) ---
+# --- Redis-based cache (survives restarts and deploys) ---
 
-DEV_CACHE_ENABLED = os.environ.get("LUMEN_DEV_CACHE", "true").lower() == "true"
-CACHE_DIR = Path(os.path.dirname(__file__), "../../.cache")
-if DEV_CACHE_ENABLED:
-    CACHE_DIR.mkdir(exist_ok=True)
+CACHE_ENABLED = os.environ.get("LUMEN_DEV_CACHE", "true").lower() == "true"
+CACHE_TTL = 604800  # 7 days
+LOCAL_CACHE_MAX = 100  # max entries in L1 cache
+
+_cache_redis = None
+
+# --- L1: Local in-memory LRU cache (per-process, zero network cost) ---
+_local_cache: dict[str, object] = {}
+_local_cache_order: list[str] = []
+
+
+def _local_get(key: str):
+    return _local_cache.get(key)
+
+
+def _local_set(key: str, value):
+    if key in _local_cache:
+        _local_cache_order.remove(key)
+    elif len(_local_cache) >= LOCAL_CACHE_MAX:
+        evict = _local_cache_order.pop(0)
+        _local_cache.pop(evict, None)
+    _local_cache[key] = value
+    _local_cache_order.append(key)
+
+
+# --- L2: Redis cache (shared across instances, survives restarts) ---
+
+def _get_cache_redis():
+    global _cache_redis
+    if _cache_redis is None:
+        _cache_redis = Redis(
+            url=os.environ.get("UPSTASH_REDIS_URL", ""),
+            token=os.environ.get("UPSTASH_REDIS_TOKEN", ""),
+        )
+    return _cache_redis
 
 
 def _cache_get(prefix: str, key: str):
-    """Read a cached value from disk."""
-    if not DEV_CACHE_ENABLED:
+    """Two-tier cache read: L1 local → L2 Redis."""
+    if not CACHE_ENABLED:
         return None
-    path = CACHE_DIR / f"{prefix}_{key}.pkl"
-    if path.exists():
-        return pickle.loads(path.read_bytes())
+
+    full_key = f"cache:{prefix}:{key}"
+
+    # L1: local memory (0ms)
+    local = _local_get(full_key)
+    if local is not None:
+        return local
+
+    # L2: Redis (2ms)
+    try:
+        data = _get_cache_redis().get(full_key)
+        if data is not None:
+            value = pickle.loads(base64.b64decode(data))
+            _local_set(full_key, value)  # promote to L1
+            return value
+    except Exception:
+        pass
     return None
 
 
 def _cache_set(prefix: str, key: str, value):
-    """Write a value to disk cache."""
-    if not DEV_CACHE_ENABLED:
+    """Write to both L1 local and L2 Redis."""
+    if not CACHE_ENABLED:
         return
-    path = CACHE_DIR / f"{prefix}_{key}.pkl"
-    path.write_bytes(pickle.dumps(value))
+
+    full_key = f"cache:{prefix}:{key}"
+
+    # L1: local memory
+    _local_set(full_key, value)
+
+    # L2: Redis
+    try:
+        encoded = base64.b64encode(pickle.dumps(value)).decode()
+        _get_cache_redis().set(full_key, encoded, ex=CACHE_TTL)
+    except Exception:
+        pass  # Redis write failure is non-fatal — L1 still has it
 
 
 def _cached_search(query: str, max_results: int = 2) -> dict:
-    """Search with disk caching to save Tavily credits."""
+    """Search with Redis caching to save Tavily credits."""
     cache_key = hashlib.sha256(f"{query}:{max_results}".encode()).hexdigest()[:16]
     cached = _cache_get("tavily", cache_key)
     if cached is not None:
@@ -73,9 +128,9 @@ def _cached_search(query: str, max_results: int = 2) -> dict:
 
 
 def _cached_llm_invoke(prompt: str, llm=None):
-    """LLM invoke with disk caching for dev/testing. Disable with LUMEN_DEV_CACHE=false."""
+    """LLM invoke with Redis caching. Disable with LUMEN_DEV_CACHE=false."""
     llm = llm or llm_heavy
-    if not DEV_CACHE_ENABLED:
+    if not CACHE_ENABLED:
         return llm.invoke(prompt)
     cache_key = hashlib.sha256(prompt.encode()).hexdigest()[:16]
     cached = _cache_get("llm", cache_key)

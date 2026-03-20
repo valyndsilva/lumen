@@ -1,5 +1,5 @@
 'use client'
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
 import type { TraceStep, TracePass, NodeName, NodeMeta as NodeMetaData } from '@/lib/types'
 
@@ -118,7 +118,6 @@ interface TracePanelProps {
 }
 
 export default function TracePanel({ steps, isEvaluating, compact = false }: TracePanelProps) {
-  const [expandedPass, setExpandedPass] = useState<number | null>(null)
   const passes = useMemo(() => groupIntoPasses(steps), [steps])
   const currentPass = passes[passes.length - 1]
   const completedPasses = passes.slice(0, -1).filter(p => p.isComplete)
@@ -205,7 +204,35 @@ export default function TracePanel({ steps, isEvaluating, compact = false }: Tra
               )}
             </div>
             <div className="flex-1 h-px bg-border-subtle" />
+            {lastCompletedDecision?.critique && (
+              <button
+                onClick={() => {
+                  const el = document.getElementById(`critique-${currentPass?.iteration}`)
+                  if (el) el.classList.toggle('hidden')
+                }}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-accent-amber/10 border border-accent-amber/25 hover:border-accent-amber/40 hover:bg-accent-amber/15 transition-all duration-200 cursor-pointer"
+              >
+                <svg className="w-3 h-3 text-accent-amber" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
+                </svg>
+                <span className="text-[10px] text-accent-amber font-medium font-(family-name:--font-dm-mono)">
+                  Why?
+                </span>
+              </button>
+            )}
           </motion.div>
+        )}
+
+        {/* Critique detail — toggled by the "Why?" pill */}
+        {!compact && isRevision && lastCompletedDecision?.critique && (
+          <div
+            id={`critique-${currentPass?.iteration}`}
+            className="hidden mb-3 px-3 py-2.5 rounded-lg bg-accent-amber/5 border border-accent-amber/15"
+          >
+            <p className="text-[10px] text-text-secondary font-(family-name:--font-dm-mono) leading-relaxed whitespace-pre-line">
+              {lastCompletedDecision.critique}
+            </p>
+          </div>
         )}
 
         {/* Horizontal stepper */}
@@ -246,7 +273,7 @@ export default function TracePanel({ steps, isEvaluating, compact = false }: Tra
                     )}
                   </div>
                   <span
-                    className="text-[10px] font-(family-name:--font-dm-mono) transition-colors duration-300 whitespace-nowrap"
+                    className="text-[8px] sm:text-[10px] font-(family-name:--font-dm-mono) transition-colors duration-300 whitespace-nowrap"
                     style={{
                       color: status === 'running'
                         ? 'var(--color-accent-amber)'
@@ -337,69 +364,6 @@ export default function TracePanel({ steps, isEvaluating, compact = false }: Tra
           )}
         </AnimatePresence>
 
-        {/* Completed pass history (hidden in compact mode) */}
-        {!compact && completedPasses.length > 0 && (
-          <div className="mt-3 space-y-1.5">
-            {completedPasses.map(pass => {
-              const drafterStep = pass.steps.find(s => s.node === 'drafter')
-              const words = drafterStep?.meta?.words
-              const actionMeta = pass.decision ? ACTION_LABELS[pass.decision.reflectionAction ?? 'accept'] : null
-
-              const isExpanded = expandedPass === pass.iteration
-              const hasCritique = !!pass.decision?.critique
-
-              return (
-                <div
-                  key={`pass-${pass.iteration}`}
-                  className={`px-3 py-2 rounded-lg bg-bg-elevated/50 border border-border-subtle/50 ${hasCritique ? 'cursor-pointer hover:border-border-default transition-colors' : ''}`}
-                  onClick={() => hasCritique && setExpandedPass(isExpanded ? null : pass.iteration)}
-                >
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <svg className="w-3 h-3 text-accent-emerald shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                    </svg>
-                    <span className="text-[11px] font-medium text-text-secondary font-(family-name:--font-dm-sans)">
-                      Pass {pass.iteration + 1}
-                    </span>
-                    {(pass.totalSources ?? 0) > 0 && (
-                      <span className="text-[10px] text-text-muted font-(family-name:--font-dm-mono)">
-                        · {pass.totalSources} sources
-                      </span>
-                    )}
-                    {words && (
-                      <span className="text-[10px] text-text-muted font-(family-name:--font-dm-mono)">
-                        · {words.toLocaleString()} words
-                      </span>
-                    )}
-                    {(pass.totalTime ?? 0) > 0 && (
-                      <span className="text-[10px] text-text-muted font-(family-name:--font-dm-mono)">
-                        · {((pass.totalTime ?? 0) / 1000).toFixed(1)}s
-                      </span>
-                    )}
-                    {actionMeta && (
-                      <span className="text-[10px] font-medium font-(family-name:--font-dm-mono)" style={{ color: actionMeta.color }}>
-                        · {actionMeta.label}
-                      </span>
-                    )}
-                    {hasCritique && (
-                      <svg
-                        className={`w-3 h-3 text-text-muted ml-auto shrink-0 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
-                        fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
-                      >
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                      </svg>
-                    )}
-                  </div>
-                  {hasCritique && (
-                    <p className={`text-[10px] text-text-muted mt-1 font-(family-name:--font-dm-mono) leading-relaxed ${isExpanded ? '' : 'truncate'}`}>
-                      {pass.decision!.critique}
-                    </p>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        )}
       </div>
     </div>
   )

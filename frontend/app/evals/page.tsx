@@ -45,7 +45,7 @@ export default function EvalsPage() {
           <span className="text-text-secondary text-xs font-(family-name:--font-dm-mono)">evals</span>
         </Link>
         <Link
-          href="/"
+          href="/research"
           className="text-xs text-text-muted hover:text-accent-amber transition-colors duration-300 font-(family-name:--font-dm-mono)"
         >
           &larr; Back to Research

@@ -57,8 +57,8 @@ export const EvalRunSchema = z.object({
   latency_ms: flexNum,
   total_tokens: flexNum,
   estimated_cost_usd: flexNum,
-  node_timings: z.string(),
-  token_counts: z.string(),
+  node_timings: z.union([z.string(), z.record(z.string(), z.unknown())]).transform(v => typeof v === 'string' ? v : JSON.stringify(v)),
+  token_counts: z.union([z.string(), z.record(z.string(), z.unknown())]).transform(v => typeof v === 'string' ? v : JSON.stringify(v)),
 })
 export type EvalRun = z.infer<typeof EvalRunSchema>
 

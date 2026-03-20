@@ -1,6 +1,5 @@
 'use client'
 import { useState } from 'react'
-import { motion } from 'motion/react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { EvalScores } from '@/lib/types'
@@ -14,24 +13,12 @@ interface DraftOutputProps {
   refineExpired?: boolean
 }
 
-function ScoreBar({ label, value, color, delay }: { label: string; value: number; color: string; delay: number }) {
-  const pct = (value / 5) * 100
+function ScoreBadge({ label, value, color }: { label: string; value: number; color: string }) {
   return (
-    <div className="flex items-center gap-3">
-      <span className="text-[11px] text-text-muted w-24 shrink-0 font-(family-name:--font-dm-mono) uppercase tracking-wider">
-        {label}
-      </span>
-      <div className="flex-1 h-1.5 bg-bg-elevated rounded-full overflow-hidden">
-        <motion.div
-          className={`h-full rounded-full ${color}`}
-          initial={{ width: 0 }}
-          animate={{ width: `${pct}%` }}
-          transition={{ duration: 0.8, delay, ease: [0.16, 1, 0.3, 1] }}
-        />
-      </div>
-      <span className="font-(family-name:--font-dm-mono) text-[11px] text-text-primary w-8 text-right">
-        {value.toFixed(1)}
-      </span>
+    <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-bg-elevated border border-border-subtle">
+      <div className={`w-1.5 h-1.5 rounded-full ${color}`} />
+      <span className="text-[10px] text-text-muted font-(family-name:--font-dm-mono)">{label}</span>
+      <span className="text-[10px] text-text-primary font-medium font-(family-name:--font-dm-mono)">{value.toFixed(1)}<span className="text-text-muted">/5</span></span>
     </div>
   )
 }
@@ -47,51 +34,46 @@ export default function DraftOutput({ draft, sources, scores, onRefine, isRefini
     setTimeout(() => setCopied(false), 2000)
   }
 
+
   return (
     <div className="surface h-full flex flex-col">
-      {/* Scores */}
-      {scores && (
-        <div className="px-5 py-4 border-b border-border-subtle">
-          <h3 className="text-[11px] font-medium text-text-muted uppercase tracking-[0.2em] mb-3 font-(family-name:--font-dm-mono)">
-            Scores
-          </h3>
-          <div className="space-y-2.5">
-            <ScoreBar label="Quality" value={scores.quality} color="bg-accent-emerald" delay={0} />
-            <ScoreBar label="Relevance" value={scores.relevance} color="bg-accent-amber" delay={0.1} />
-            <ScoreBar label="Grounded" value={scores.groundedness} color="bg-accent-blue" delay={0.2} />
-          </div>
+      {/* Header bar: scores + actions in one row */}
+      <div className="px-5 py-3 border-b border-border-subtle flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {scores && (
+            <>
+              <span className="text-[9px] text-text-muted uppercase tracking-wider font-(family-name:--font-dm-mono) mr-1">Scores</span>
+              <ScoreBadge label="Quality" value={scores.quality} color="bg-accent-emerald" />
+              <ScoreBadge label="Relevance" value={scores.relevance} color="bg-accent-amber" />
+              <ScoreBadge label="Grounded" value={scores.groundedness} color="bg-accent-blue" />
+            </>
+          )}
         </div>
-      )}
-
-      {/* Draft content */}
-      <div className="flex-1 overflow-y-auto px-5 py-4">
-        <div className="flex items-center justify-between mb-5">
-          <h2 className="text-[11px] font-medium text-text-muted uppercase tracking-[0.2em] font-(family-name:--font-dm-mono)">
-            Article
-          </h2>
-          <div className="flex items-center gap-2">
-            {refineExpired ? (
-              <span className="text-[11px] text-text-muted font-(family-name:--font-dm-mono)">
-                Session expired
-              </span>
-            ) : onRefine && (
-              <button
-                onClick={onRefine}
-                disabled={isRefining}
-                className="text-[11px] text-accent-amber hover:text-text-primary bg-accent-amber-dim hover:bg-accent-amber/20 px-3 py-1.5 rounded-md transition-all duration-200 font-(family-name:--font-dm-mono) disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                {isRefining ? 'Refining...' : 'Dig Deeper'}
-              </button>
-            )}
+        <div className="flex items-center gap-2">
+          {refineExpired ? (
+            <span className="text-[10px] text-text-muted font-(family-name:--font-dm-mono)">
+              Session expired
+            </span>
+          ) : onRefine && (
             <button
-              onClick={handleCopy}
-              className="text-[11px] text-text-muted hover:text-text-primary bg-bg-elevated hover:bg-border-subtle px-3 py-1.5 rounded-md transition-all duration-200 font-(family-name:--font-dm-mono)"
+              onClick={onRefine}
+              disabled={isRefining}
+              className="text-[10px] text-accent-amber hover:text-text-primary bg-accent-amber-dim hover:bg-accent-amber/20 px-2.5 py-1 rounded-md transition-all duration-200 font-(family-name:--font-dm-mono) disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              {copied ? 'Copied' : 'Copy'}
+              {isRefining ? 'Refining...' : 'Dig Deeper'}
             </button>
-          </div>
+          )}
+          <button
+            onClick={handleCopy}
+            className="text-[10px] text-text-muted hover:text-text-primary bg-bg-elevated hover:bg-border-subtle px-2.5 py-1 rounded-md transition-all duration-200 font-(family-name:--font-dm-mono)"
+          >
+            {copied ? 'Copied' : 'Copy'}
+          </button>
         </div>
+      </div>
 
+      {/* Article content */}
+      <div className="flex-1 overflow-y-auto px-5 py-4">
         <div className="prose-lumen">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>
             {draftWithoutSources}

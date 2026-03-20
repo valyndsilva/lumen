@@ -143,3 +143,14 @@ body {
   border: 1px solid var(--color-border-default);
   border-radius: 12px;
 }
+
+/* Print styles — clean PDF output */
+@media print {
+  body { background: white !important; color: black !important; }
+  header, .surface:has(.flex-wrap), nav { display: none !important; }
+  .surface { border: none !important; background: white !important; }
+  .prose-lumen h1 { color: black !important; }
+  .prose-lumen h2 { color: #333 !important; border-color: #ccc !important; }
+  .prose-lumen p, .prose-lumen li { color: #333 !important; }
+  .prose-lumen a { color: #2563eb !important; }
+}

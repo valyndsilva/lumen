@@ -61,7 +61,8 @@ const TOPIC_POOL: Record<string, { label: string; topic: string }[]> = {
   ],
 }
 
-const PILLS_TO_SHOW = 6
+const PILLS_MOBILE = 6
+const PILLS_DESKTOP = 8
 
 function pickRandom<T>(arr: T[], count: number): T[] {
   const shuffled = [...arr].sort(() => Math.random() - 0.5)
@@ -85,9 +86,9 @@ export default function ResearchForm({
 
   // Pick random pills from the pool — only on client to avoid hydration mismatch
   const pool = TOPIC_POOL[selectedDomain] ?? TOPIC_POOL.general
-  const [pills, setPills] = useState(pool.slice(0, PILLS_TO_SHOW))
+  const [pills, setPills] = useState(pool.slice(0, PILLS_DESKTOP))
   useEffect(() => {
-    setPills(pickRandom(TOPIC_POOL[selectedDomain] ?? TOPIC_POOL.general, PILLS_TO_SHOW))
+    setPills(pickRandom(TOPIC_POOL[selectedDomain] ?? TOPIC_POOL.general, PILLS_DESKTOP))
   }, [selectedDomain])
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -99,7 +100,7 @@ export default function ResearchForm({
 
   return (
     <div className="px-5 pt-4 pb-3">
-      <form onSubmit={handleSubmit} className="flex items-center gap-3">
+      <form onSubmit={handleSubmit} className="flex flex-wrap sm:flex-nowrap items-center gap-2 sm:gap-3">
         <select
           value={selectedDomain}
           onChange={(e) => onDomainChange(e.target.value)}
@@ -157,12 +158,12 @@ export default function ResearchForm({
       {/* Suggested topics (domain-aware) */}
       {!isRunning && !topic.trim() && (
         <div className="flex flex-wrap gap-1.5 mt-2.5">
-          {pills.map(({ label, topic: t }) => (
+          {pills.map(({ label, topic: t }, i) => (
             <button
               key={t}
               type="button"
               onClick={() => { setTopic(t); onSubmit(t) }}
-              className="text-[10px] px-2.5 py-1 rounded-md bg-bg-elevated border border-border-subtle text-text-secondary hover:text-accent-amber hover:border-accent-amber/30 transition-all duration-200 font-(family-name:--font-dm-mono)"
+              className={`text-[10px] px-2.5 py-1 rounded-md bg-bg-elevated border border-border-subtle text-text-secondary hover:text-accent-amber hover:border-accent-amber/30 transition-all duration-200 font-(family-name:--font-dm-mono) ${i >= PILLS_MOBILE ? 'hidden lg:inline-block' : ''}`}
             >
               {label}
             </button>
