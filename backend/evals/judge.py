@@ -2,17 +2,28 @@ import hashlib
 import json
 import os
 import pickle
+import base64
 import re
-from pathlib import Path
 from langchain_anthropic import ChatAnthropic
+from upstash_redis import Redis
 from agent.prompts import JUDGE_PROMPT
 
 llm = ChatAnthropic(model="claude-haiku-4-5-20251001", max_tokens=200)
 
-DEV_CACHE_ENABLED = os.environ.get("LUMEN_DEV_CACHE", "true").lower() == "true"
-CACHE_DIR = Path(os.path.dirname(__file__), "../../.cache")
-if DEV_CACHE_ENABLED:
-    CACHE_DIR.mkdir(exist_ok=True)
+CACHE_ENABLED = os.environ.get("LUMEN_DEV_CACHE", "true").lower() == "true"
+CACHE_TTL = 604800  # 7 days
+
+_redis = None
+
+
+def _get_redis():
+    global _redis
+    if _redis is None:
+        _redis = Redis(
+            url=os.environ.get("UPSTASH_REDIS_URL", ""),
+            token=os.environ.get("UPSTASH_REDIS_TOKEN", ""),
+        )
+    return _redis
 
 
 def _parse_json(text: str):
@@ -23,14 +34,21 @@ def _parse_json(text: str):
 
 
 def _cached_llm_invoke(prompt: str):
-    if not DEV_CACHE_ENABLED:
+    if not CACHE_ENABLED:
         return llm.invoke(prompt)
     cache_key = hashlib.sha256(prompt.encode()).hexdigest()[:16]
-    path = CACHE_DIR / f"llm_{cache_key}.pkl"
-    if path.exists():
-        return pickle.loads(path.read_bytes())
+    try:
+        data = _get_redis().get(f"cache:judge:{cache_key}")
+        if data is not None:
+            return pickle.loads(base64.b64decode(data))
+    except Exception:
+        pass
     result = llm.invoke(prompt)
-    path.write_bytes(pickle.dumps(result))
+    try:
+        encoded = base64.b64encode(pickle.dumps(result)).decode()
+        _get_redis().set(f"cache:judge:{cache_key}", encoded, ex=CACHE_TTL)
+    except Exception:
+        pass
     return result
 
 
@@ -42,3 +60,9 @@ def score_draft(topic: str, draft: str, sources: list[str]) -> dict:
     )
     response = _cached_llm_invoke(prompt)
     return _parse_json(response.content)
+
+
+async def score_draft_async(topic: str, draft: str, sources: list[str]) -> dict:
+    """Non-blocking version of score_draft for use in async streaming pipelines."""
+    import asyncio
+    return await asyncio.to_thread(score_draft, topic, draft, sources)
