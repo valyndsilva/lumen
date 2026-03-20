@@ -104,8 +104,12 @@ export const SSECancelledSchema = z.object({
   run_id: z.string(),
 })
 
+export const ErrorCodeSchema = z.enum(['llm', 'search_provider', 'auth', 'database', 'unknown'])
+export type ErrorCode = z.infer<typeof ErrorCodeSchema>
+
 export const SSEErrorSchema = z.object({
   type: z.literal('error'),
+  code: ErrorCodeSchema.optional().default('unknown'),
   detail: z.string(),
 })
 

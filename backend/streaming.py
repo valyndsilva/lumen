@@ -119,7 +119,33 @@ async def _stream_pipeline(state: dict, run_id: str, user_id: str):
     except Exception as e:
         import traceback
         traceback.print_exc()
-        yield _sse("error", {"detail": str(e)})
+        yield _sse("error", {"code": _classify_error(e), "detail": str(e)})
+
+
+def _classify_error(e: Exception) -> str:
+    """Classify an exception into a user-facing error code."""
+    msg = str(e).lower()
+    err_type = type(e).__name__.lower()
+
+    # Anthropic / LLM errors
+    if any(k in msg for k in ("anthropic", "claude", "overloaded", "rate_limit")) or \
+       any(k in err_type for k in ("anthropic", "api")):
+        return "llm"
+
+    # Search provider errors
+    if any(k in msg for k in ("tavily", "pubmed", "courtlistener", "edgar", "search")) or \
+       any(k in err_type for k in ("httpx", "connection", "timeout")):
+        return "search_provider"
+
+    # Auth / key errors
+    if any(k in msg for k in ("authentication", "unauthorized", "token", "jwt", "clerk")):
+        return "auth"
+
+    # Database errors
+    if any(k in msg for k in ("supabase", "postgres", "database")):
+        return "database"
+
+    return "unknown"
 
 
 async def stream_research(

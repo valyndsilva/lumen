@@ -21,10 +21,23 @@ function ExpandableText({ text, className = '' }: { text: string; className?: st
   )
 }
 
+interface PipelineError {
+  code: string
+  detail: string
+}
+
+const ERROR_MESSAGES: Record<string, { title: string; hint: string }> = {
+  llm: { title: 'LLM Service Error', hint: 'Your API key was not charged. Try again in a moment.' },
+  search_provider: { title: 'Search Provider Unavailable', hint: 'Try a different research domain, or try again later.' },
+  auth: { title: 'Session Expired', hint: 'Please sign in again.' },
+  database: { title: 'Database Unavailable', hint: 'Results could not be saved. Try again shortly.' },
+  unknown: { title: 'Pipeline Error', hint: 'Something went wrong. Please try again.' },
+}
+
 interface ActivityFeedProps {
   steps: TraceStep[]
   isEvaluating: boolean
-  error?: string | null
+  error?: PipelineError | null
 }
 
 interface FeedEntry {
@@ -410,30 +423,36 @@ export default function ActivityFeed({ steps, isEvaluating, error }: ActivityFee
         </AnimatePresence>
 
         {/* Error display */}
-        {error && (
-          <motion.div
-            className="mt-3 px-3 py-3 rounded-lg bg-accent-red/8 border border-accent-red/20"
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3 }}
-          >
-            <div className="flex items-start gap-3">
-              <div className="w-6 h-6 rounded-full flex items-center justify-center shrink-0 mt-0.5 bg-accent-red/15 border border-accent-red/30">
-                <svg className="w-3.5 h-3.5 text-accent-red" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
-                </svg>
+        {error && (() => {
+          const info = ERROR_MESSAGES[error.code] ?? ERROR_MESSAGES.unknown
+          return (
+            <motion.div
+              className="mt-3 px-3 py-3 rounded-lg bg-accent-red/8 border border-accent-red/20"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.3 }}
+            >
+              <div className="flex items-start gap-3">
+                <div className="w-6 h-6 rounded-full flex items-center justify-center shrink-0 mt-0.5 bg-accent-red/15 border border-accent-red/30">
+                  <svg className="w-3.5 h-3.5 text-accent-red" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-xs font-medium text-accent-red font-(family-name:--font-dm-sans)">
+                    {info.title}
+                  </p>
+                  <p className="text-[11px] text-text-secondary mt-1 font-(family-name:--font-dm-sans)">
+                    {info.hint}
+                  </p>
+                  <p className="text-[10px] text-text-muted mt-1.5 font-(family-name:--font-dm-mono) leading-relaxed">
+                    {error.detail}
+                  </p>
+                </div>
               </div>
-              <div>
-                <p className="text-xs font-medium text-accent-red font-(family-name:--font-dm-sans)">
-                  Pipeline Error
-                </p>
-                <p className="text-[11px] text-text-muted mt-1 font-(family-name:--font-dm-mono) leading-relaxed">
-                  {error}
-                </p>
-              </div>
-            </div>
-          </motion.div>
-        )}
+            </motion.div>
+          )
+        })()}
       </div>
     </div>
   )

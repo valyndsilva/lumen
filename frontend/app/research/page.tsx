@@ -65,7 +65,7 @@ export default function Home() {
   const [currentNode, setCurrentNode] = useState<NodeName | null>(null)
   const [isRefining, setIsRefining] = useState(false)
   const [contentTab, setContentTab] = useState<'article' | 'activity'>('activity')
-  const [pipelineError, setPipelineError] = useState<string | null>(null)
+  const [pipelineError, setPipelineError] = useState<{ code: string; detail: string } | null>(null)
   const [refineExpired, setRefineExpired] = useState(false)
 
   // Domain selector
@@ -260,7 +260,7 @@ export default function Home() {
           setCurrentNode(null)
           activeRunId.current = null
         } else if (event.type === 'error') {
-          setPipelineError(event.detail)
+          setPipelineError({ code: event.code ?? 'unknown', detail: event.detail })
           setIsRunning(false)
           setCurrentNode(null)
           activeRunId.current = null
@@ -316,7 +316,7 @@ export default function Home() {
           setCurrentNode(null)
           activeRunId.current = null
         } else if (event.type === 'error') {
-          setPipelineError(event.detail)
+          setPipelineError({ code: event.code ?? 'unknown', detail: event.detail })
           setIsRefining(false)
           setCurrentNode(null)
           activeRunId.current = null
