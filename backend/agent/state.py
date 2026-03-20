@@ -33,3 +33,4 @@ class AgentState(TypedDict):
     token_counts: dict          # node_name -> {input, output}
     eval_scores: Optional[EvalScores]
     run_id: str
+    _byok_anthropic_key: Optional[str]  # BYOK key — passed through state, stripped before persistence

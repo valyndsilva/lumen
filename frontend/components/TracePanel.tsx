@@ -1,6 +1,8 @@
 'use client'
 import { useMemo } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import type { TraceStep, TracePass, NodeName, NodeMeta as NodeMetaData } from '@/lib/types'
 
 interface NodeDisplay {
@@ -229,9 +231,11 @@ export default function TracePanel({ steps, isEvaluating, compact = false }: Tra
             id={`critique-${currentPass?.iteration}`}
             className="hidden mb-3 px-3 py-2.5 rounded-lg bg-accent-amber/5 border border-accent-amber/15"
           >
-            <p className="text-[10px] text-text-secondary font-(family-name:--font-dm-mono) leading-relaxed whitespace-pre-line">
-              {lastCompletedDecision.critique}
-            </p>
+            <div className="text-[10px] text-text-secondary font-(family-name:--font-dm-mono) leading-relaxed prose prose-invert prose-xs max-w-none [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:list-decimal [&_ol]:pl-4 [&_p]:my-1 [&_li]:my-0.5">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {lastCompletedDecision.critique}
+              </ReactMarkdown>
+            </div>
           </div>
         )}
 

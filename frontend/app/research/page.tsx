@@ -1,7 +1,7 @@
 'use client'
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
-import { UserButton } from '@clerk/nextjs'
+import { UserButton, useAuth } from '@clerk/nextjs'
 import ResearchForm from '@/components/ResearchForm'
 import TracePanel from '@/components/TracePanel'
 import DraftOutput from '@/components/DraftOutput'
@@ -58,6 +58,7 @@ function addLoopSteps(
 }
 
 export default function Home() {
+  const { isLoaded } = useAuth()
   const [steps, setSteps] = useState<TraceStep[]>(makeInitialSteps())
   const [result, setResult] = useState<RunResult | null>(null)
   const [isRunning, setIsRunning] = useState(false)
@@ -110,8 +111,9 @@ export default function Home() {
   const [showKeyModal, setShowKeyModal] = useState(false)
   const [rateLimitMessage, setRateLimitMessage] = useState('')
 
-  // Check if user has a saved key on mount
+  // Check if user has a saved key — wait until Clerk session is ready
   useEffect(() => {
+    if (!isLoaded) return
     checkKeys().then(status => {
       setHasKey(status.has_key)
       setKeyPreview(status.preview ?? null)
@@ -123,7 +125,7 @@ export default function Home() {
       setShowKeyModal(true)
       setRateLimitMessage('Enter your Anthropic API key to start researching.')
     })
-  }, [])
+  }, [isLoaded])
   // Store the pending action so we can retry after keys are provided
   const pendingAction = useRef<{ type: 'research'; topic: string } | { type: 'refine' } | null>(null)
   // Track active run for cancellation

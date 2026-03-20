@@ -70,10 +70,14 @@ async def _resolve_byok(state: dict, user_id: str, byok_keys: dict | None) -> No
     """Apply BYOK keys to state in-place — from request or saved key."""
     if byok_keys:
         state.update(byok_keys)
+        print(f"[BYOK] Using request key for user {user_id[:10]}...")
     else:
         saved = await get_user_key_async(user_id)
         if saved:
             state["_byok_anthropic_key"] = saved["key"]
+            print(f"[BYOK] Loaded saved key for user {user_id[:10]}..., length={len(saved['key'])}")
+        else:
+            print(f"[BYOK] WARNING: No key found for user {user_id[:10]}...")
 
 
 async def _stream_pipeline(state: dict, run_id: str, user_id: str):
@@ -101,7 +105,8 @@ async def _stream_pipeline(state: dict, run_id: str, user_id: str):
 
         yield _sse("eval_start", {})
         sources = [r["url"] for r in state.get("search_results", [])]
-        scores = await score_draft_async(state["topic"], state.get("draft", ""), sources)
+        byok_key = state.get("_byok_anthropic_key")
+        scores = await score_draft_async(state["topic"], state.get("draft", ""), sources, api_key=byok_key)
         await save_run(
             run_id, user_id, state["topic"], state.get("draft", ""), sources,
             scores, state.get("node_timings", {}), state.get("token_counts", {}),
