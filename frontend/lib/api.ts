@@ -3,6 +3,33 @@ import type { SSEEvent, EvalRun } from './types'
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
 
+// Auth token getter — set by the app when Clerk is ready
+let _getToken: (() => Promise<string | null>) | null = null
+let _lastToken: string | null = null
+
+export function setAuthTokenGetter(getter: () => Promise<string | null>) {
+  _getToken = getter
+}
+
+/** Returns the most recently fetched token (sync). Used for keepalive requests during page unload. */
+export function getCachedAuthToken(): string | null {
+  return _lastToken
+}
+
+async function authHeaders(): Promise<Record<string, string>> {
+  if (!_getToken) return {}
+  try {
+    const token = await _getToken()
+    _lastToken = token
+    if (!token) return {}
+    return { Authorization: `Bearer ${token}` }
+  } catch {
+    // Stale/invalid session — abort the request and redirect
+    window.location.href = '/sign-in'
+    throw new Error('Session expired')
+  }
+}
+
 export interface ApiKeys {
   anthropic_api_key: string
 }
@@ -86,9 +113,10 @@ export async function* streamResearch(topic: string, domain: string = 'general',
     body.anthropic_api_key = keys.anthropic_api_key
   }
 
+  const auth = await authHeaders()
   const res = await fetch(`${API_BASE}/api/research`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...auth },
     body: JSON.stringify(body),
   })
 
@@ -108,9 +136,10 @@ export async function* streamRefine(runId: string, keys?: ApiKeys): AsyncGenerat
     body.anthropic_api_key = keys.anthropic_api_key
   }
 
+  const auth = await authHeaders()
   const res = await fetch(`${API_BASE}/api/research/${runId}/refine`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...auth },
     body: JSON.stringify(body),
   })
 
@@ -127,7 +156,8 @@ export async function* streamRefine(runId: string, keys?: ApiKeys): AsyncGenerat
 export async function cancelResearch(runId: string | null): Promise<void> {
   if (!runId) return
   try {
-    await fetch(`${API_BASE}/api/research/${runId}/cancel`, { method: 'POST' })
+    const auth = await authHeaders()
+    await fetch(`${API_BASE}/api/research/${runId}/cancel`, { method: 'POST', headers: auth })
   } catch {
     // Ignore network errors on cancel (page might be unloading)
   }
@@ -144,8 +174,40 @@ export async function fetchDomains(): Promise<Domain[]> {
   return res.json()
 }
 
+// --- Key management ---
+
+export interface KeyStatus {
+  has_key: boolean
+  preview?: string
+  created_at?: string
+}
+
+export async function checkKeys(): Promise<KeyStatus> {
+  const auth = await authHeaders()
+  const res = await fetch(`${API_BASE}/api/keys`, { headers: auth })
+  if (!res.ok) return { has_key: false }
+  return res.json()
+}
+
+export async function saveKey(anthropicKey: string): Promise<void> {
+  const auth = await authHeaders()
+  const res = await fetch(`${API_BASE}/api/keys`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...auth },
+    body: JSON.stringify({ anthropic_api_key: anthropicKey }),
+  })
+  if (!res.ok) throw new Error('Failed to save key')
+}
+
+export async function deleteKey(): Promise<void> {
+  const auth = await authHeaders()
+  const res = await fetch(`${API_BASE}/api/keys`, { method: 'DELETE', headers: auth })
+  if (!res.ok) throw new Error('Failed to delete key')
+}
+
 export async function fetchEvals(): Promise<EvalRun[]> {
-  const res = await fetch(`${API_BASE}/api/evals`)
+  const auth = await authHeaders()
+  const res = await fetch(`${API_BASE}/api/evals`, { headers: auth })
   if (!res.ok) throw new Error(`Failed to fetch evals: ${res.status}`)
   const data = await res.json()
   return EvalRunArraySchema.parse(data)
@@ -172,7 +234,8 @@ function toNum(v: unknown): number | null {
 }
 
 export async function fetchRun(runId: string): Promise<SavedRun> {
-  const res = await fetch(`${API_BASE}/api/research/${runId}`)
+  const auth = await authHeaders()
+  const res = await fetch(`${API_BASE}/api/research/${runId}`, { headers: auth })
   if (!res.ok) throw new Error(`Failed to fetch run: ${res.status}`)
   const data = await res.json()
   return {
