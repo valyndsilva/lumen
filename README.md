@@ -73,7 +73,7 @@ Without it, the pipeline is a one-shot generator. With it, the system self-corre
 - **`revise`** — Writing quality issues. Loop back to the drafter with critique. No wasted API calls on re-searching.
 - **`research`** — Content gaps found. Loop back to the searcher with targeted queries, then through the full pipeline again.
 
-Critique accumulates in `reflections[]` via LangGraph's `operator.add`. The drafter sees all prior feedback on each revision. The loop is capped at 2 iterations — this bounds worst-case cost at ~3x while giving the system enough room to meaningfully improve.
+Critique accumulates in `reflections[]` via LangGraph's `operator.add`. The drafter sees all prior feedback on each revision. The loop is capped at 1 iteration — this bounds worst-case cost at ~3x while giving the system enough room to meaningfully improve.
 
 ### State Accumulation
 
@@ -98,7 +98,7 @@ Only the Drafter uses Claude Sonnet 4.6. Every other node — including the judg
 | **Reflection** | Haiku 4.5 | JSON classification (accept/revise/research) with critique text. |
 | **Judge** | Haiku 4.5 | Outputs 3 numbers in JSON. |
 
-**Cost per run:** ~$0.05 for a single-pass run with user's own API key. Worst case with 2 reflection iterations: ~$0.10.
+**Cost per run:** ~$0.05 for a single-pass run with user's own API key. Worst case with 1 reflection iteration: ~$0.08.
 
 ## Domain-Specific Research
 
@@ -130,7 +130,7 @@ The hardest problem in agentic systems isn't the model — it's context. An agen
 | **Reflection** | Catches gaps, unsupported claims, and structural issues before delivery |
 | **Judge** | Makes quality visible — a low groundedness score signals weak citations |
 
-The reflection loop is the critical layer. Without it, the pipeline is a one-shot generator. With it, the system self-corrects through up to 2 iterations of targeted revision or research.
+The reflection loop is the critical layer. Without it, the pipeline is a one-shot generator. With it, the system self-corrects through up to 1 iteration of targeted revision or research.
 
 ## Authentication & Key Management
 
@@ -325,7 +325,7 @@ All infrastructure runs on free tiers. The backend scales horizontally — add m
 | SSE + REST cancel | Simple unidirectional streaming, cancel between nodes | Can't cancel mid-node |
 | Sonnet only for drafter | ~75% cost savings | Lighter model on extraction tasks |
 | Two-tier cache (L1 local + L2 Redis) | L1 eliminates Redis calls on hot paths; L2 survives restarts | L1 lost on restart (by design) |
-| Reflection loop (max 3) | Self-improving output | Up to 3x cost on worst case (2 additional loops) |
+| Reflection loop (max 3) | Self-improving output | Up to 2x cost on worst case (1 additional loop) |
 | YAML domain configs | No code changes to add domains | Requires server restart |
 
 ## Key Workflows

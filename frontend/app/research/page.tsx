@@ -84,9 +84,12 @@ export default function Home() {
       const saved = sessionStorage.getItem('lumen_last_run')
       if (saved) {
         const { result: savedResult, steps: savedSteps, tab } = JSON.parse(saved)
-        if (savedResult) setResult(savedResult)
-        if (savedSteps?.length) setSteps(savedSteps)
-        if (tab) setContentTab(tab)
+        // Only restore if there's a completed result — don't restore stuck/running states
+        if (savedResult) {
+          setResult(savedResult)
+          if (savedSteps?.length) setSteps(savedSteps)
+          if (tab) setContentTab(tab)
+        }
       }
     } catch {}
   }, [])
@@ -277,6 +280,8 @@ export default function Home() {
     } catch (err) {
       setIsRunning(false)
       setIsEvaluating(false)
+      setCurrentNode(null)
+      setSteps(makeInitialSteps())
       activeRunId.current = null
       if (err instanceof RateLimitExceededError) {
         if (err.code !== 'concurrent_limit') {
@@ -284,7 +289,6 @@ export default function Home() {
           setRateLimitMessage(err.message)
           setShowKeyModal(true)
         }
-        // concurrent_limit and rate_limit — silently ignore (user just cancelled)
       } else {
         console.error('Research stream error:', err)
       }
@@ -332,8 +336,9 @@ export default function Home() {
       }
     } catch (err) {
       setIsRefining(false)
-      activeRunId.current = null
       setIsEvaluating(false)
+      setCurrentNode(null)
+      activeRunId.current = null
       if (err instanceof RateLimitExceededError) {
         if (err.code !== 'concurrent_limit') {
           pendingAction.current = { type: 'refine' }

@@ -308,7 +308,7 @@ def outliner_node(state: AgentState) -> dict:
     }
 
 
-MAX_REFLECTION_ITERATIONS = 2
+MAX_REFLECTION_ITERATIONS = 1
 
 
 def drafter_node(state: AgentState) -> dict:

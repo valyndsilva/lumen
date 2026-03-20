@@ -3,6 +3,7 @@ import json
 import uuid
 
 from agent.graph import lumen_graph
+from agent.nodes import MAX_REFLECTION_ITERATIONS
 from auth.keys import get_user_key_async
 from evals.judge import score_draft_async
 from evals.store import save_run
@@ -197,7 +198,7 @@ async def stream_refine(
         return
 
     state["should_continue"] = False
-    state["iteration"] = 0
+    state["iteration"] = MAX_REFLECTION_ITERATIONS  # Forces reflection to accept immediately — single pass
     await _resolve_byok(state, user_id, byok_keys)
     async for chunk in _stream_pipeline(state, run_id, user_id):
         yield chunk
