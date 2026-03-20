@@ -73,7 +73,7 @@ Without it, the pipeline is a one-shot generator. With it, the system self-corre
 - **`revise`** — Writing quality issues. Loop back to the drafter with critique. No wasted API calls on re-searching.
 - **`research`** — Content gaps found. Loop back to the searcher with targeted queries, then through the full pipeline again.
 
-Critique accumulates in `reflections[]` via LangGraph's `operator.add`. The drafter sees all prior feedback on each revision. The loop is capped at 1 iteration — this bounds worst-case cost at ~3x while giving the system enough room to meaningfully improve.
+Critique accumulates in `reflections[]` via LangGraph's `operator.add`. The drafter sees all prior feedback on each revision. The loop is capped at 3 iterations — this bounds worst-case cost at ~4x while still giving the system a chance to self-correct.
 
 ### State Accumulation
 
@@ -98,7 +98,7 @@ Only the Drafter uses Claude Sonnet 4.6. Every other node — including the judg
 | **Reflection** | Haiku 4.5 | JSON classification (accept/revise/research) with critique text. |
 | **Judge** | Haiku 4.5 | Outputs 3 numbers in JSON. |
 
-**Cost per run:** ~$0.05 for a single-pass run with user's own API key. Worst case with 1 reflection iteration: ~$0.08.
+**Cost per run:** ~$0.05 for a single-pass run with user's own API key. Worst case with 3 reflection iterations: ~$0.15.
 
 ## Domain-Specific Research
 
@@ -130,7 +130,7 @@ The hardest problem in agentic systems isn't the model — it's context. An agen
 | **Reflection** | Catches gaps, unsupported claims, and structural issues before delivery |
 | **Judge** | Makes quality visible — a low groundedness score signals weak citations |
 
-The reflection loop is the critical layer. Without it, the pipeline is a one-shot generator. With it, the system self-corrects through up to 1 iteration of targeted revision or research.
+The reflection loop is the critical layer. Without it, the pipeline is a one-shot generator. With it, the system self-corrects through up to 3 iterations of targeted revision or research.
 
 ## Authentication & Key Management
 
@@ -154,7 +154,7 @@ BYOK shifts the most expensive operational cost — LLM inference — to the use
 
 The frontend receives pipeline progress via Server-Sent Events. Each node completion fires an SSE event with timing, iteration number, and node-specific metadata (search result previews, word counts, reflection decisions). This gives the user a live view of every step as it happens.
 
-I chose SSE over WebSockets because the data flow is unidirectional (server → client), SSE reconnects automatically on network drops, and it works through standard HTTP infrastructure without upgrade negotiation. The one limitation is that you can't cancel a pipeline mid-node through SSE — cancellation is implemented as a Redis flag (`cancel:{run_id}`) that the backend checks between nodes.
+I chose SSE over WebSockets because the data flow is unidirectional (server → client), SSE reconnects automatically on network drops, and it works through standard HTTP infrastructure without upgrade negotiation. Cancellation is implemented as a Redis flag (`cancel:{run_id}`) — each node checks the flag before starting its LLM call, and the streaming layer checks it between nodes. The worst case is waiting for one in-flight LLM call to finish.
 
 For page-unload cancellation, the frontend sends a `fetch` request with `keepalive: true` and a cached auth token. This replaced an earlier `sendBeacon` approach that couldn't include Authorization headers, which meant the cancel endpoint (which requires auth) would always reject it.
 
@@ -237,7 +237,7 @@ Live feed of each node's output — search queries, source titles with URLs, out
 - **Activity** — active during the pipeline run, shows node-by-node progress
 - **Article** — auto-selected when the run completes, shows scores + article + sources
 
-State is preserved in `sessionStorage` so navigating to the Eval Dashboard and back doesn't lose your article.
+Only the completed result is persisted in `sessionStorage` — pipeline state (running steps, progress) is always transient. Navigating to the Eval Dashboard and back preserves the article. Cancellation clears everything.
 
 ### Eval Dashboard
 
@@ -262,7 +262,9 @@ The pipeline is infrastructure-agnostic. Swapping Redis or Supabase requires cha
 
 ## Testing
 
-The backend has a 50-test suite covering all modules:
+111 tests across backend (50) and frontend (61):
+
+### Backend (pytest)
 
 | Test file | Coverage |
 |-----------|----------|
@@ -272,6 +274,16 @@ The backend has a 50-test suite covering all modules:
 | `test_endpoints.py` | All HTTP endpoints — validation, auth, rate limits, CRUD |
 
 Tests use a `FakeRedis` in-memory implementation and mock the LangGraph pipeline, so the suite runs in ~1 second with no external dependencies.
+
+### Frontend (vitest)
+
+| Test file | Coverage |
+|-----------|----------|
+| `types.test.ts` | All SSE schemas, error codes, node names, reflection actions, eval scores |
+| `api.test.ts` | Auth token getter/cache public API |
+| `error-messages.test.ts` | All error codes map to user-friendly messages with actionable hints |
+| `session-storage.test.ts` | Save/restore/clear lifecycle, running guards, corruption handling |
+| `pipeline-state.test.ts` | Step generation, resetPipeline behaviour for complete/cancel/error paths |
 
 ## Monitoring & Observability
 
@@ -322,10 +334,10 @@ All infrastructure runs on free tiers. The backend scales horizontally — add m
 | Upstash Redis | Survives restarts, native TTL, shared state across instances | Command limits on free tier |
 | Clerk for auth | OAuth, JWT, zero auth code to maintain | Vendor lock-in |
 | BYOK with encrypted storage | Zero operator LLM cost, keys encrypted at rest | Users must have an Anthropic API key |
-| SSE + REST cancel | Simple unidirectional streaming, cancel between nodes | Can't cancel mid-node |
+| SSE + REST cancel | Simple unidirectional streaming, cancel checked at each node start | Can't cancel mid-LLM-call |
 | Sonnet only for drafter | ~75% cost savings | Lighter model on extraction tasks |
 | Two-tier cache (L1 local + L2 Redis) | L1 eliminates Redis calls on hot paths; L2 survives restarts | L1 lost on restart (by design) |
-| Reflection loop (max 3) | Self-improving output | Up to 2x cost on worst case (1 additional loop) |
+| Reflection loop (max 3) | Self-improving output | Up to 4x cost on worst case (3 additional loops) |
 | YAML domain configs | No code changes to add domains | Requires server restart |
 
 ## Key Workflows
@@ -488,9 +500,9 @@ sequenceDiagram
 
     alt State found
         API->>API: Decrypt user's key
-        API->>Graph: Re-run pipeline (iteration reset)
+        API->>Graph: Single-pass pipeline (reflection auto-accepts)
 
-        Note over Graph: New sources accumulate<br/>via operator.add.<br/>Summariser skips already-processed URLs.
+        Note over Graph: New sources accumulate<br/>via operator.add.<br/>Summariser skips already-processed URLs.<br/>No reflection loops — single pass only.
 
         Graph-->>FE: SSE events (node by node)
         API->>DB: Save updated article + new scores
@@ -546,7 +558,7 @@ This shows the three distinct paths in action: `research` triggers a full re-sea
 - **Encrypted key storage** — User API keys encrypted with Fernet, cached in Redis (encrypted form), decrypted per-request only
 - **Rate limiting** — 5/min per user + 1 concurrent pipeline via Upstash Redis
 - **Input validation** — 3-500 character topics with prompt injection blocking
-- **Pipeline cancellation** — Cancel button + `fetch(keepalive)` with auth on page unload; Redis flag checked between nodes
+- **Pipeline cancellation** — Cancel button + `fetch(keepalive)` with auth on page unload; Redis flag checked at each node start and between nodes; cancellation fully resets frontend state and clears sessionStorage
 - **SSE validation** — Zod discriminated union schemas on all streaming events
 - **Source deduplication** — No duplicate URLs across search iterations
 - **Cost controls** — BYOK (zero operator LLM cost), Haiku for 5/6 nodes, batching, caching
