@@ -14,6 +14,7 @@ from .prompts import (
 )
 from .search_providers import SEARCH_PROVIDERS
 from domains import load_domain
+from redis_services import is_cancelled
 import os
 
 from dotenv import load_dotenv
@@ -24,15 +25,24 @@ llm_heavy = ChatAnthropic(model="claude-sonnet-4-6", max_tokens=2000)
 tavily = TavilyClient(api_key=os.environ.get("TAVILY_API_KEY", ""))
 
 
+_byok_client_cache: dict[str, tuple] = {}
+_BYOK_CACHE_MAX = 50
+
+
 def _get_clients(state: AgentState) -> tuple:
-    """Return (llm_fast, llm_heavy, tavily_client) — uses BYOK Anthropic key if present."""
+    """Return (llm_fast, llm_heavy, tavily_client) — uses BYOK Anthropic key if present.
+    BYOK clients are cached per API key to avoid creating new HTTP connections on every node."""
     byok_anthropic = state.get("_byok_anthropic_key")
     if byok_anthropic:
-        return (
-            ChatAnthropic(model="claude-haiku-4-5-20251001", max_tokens=1000, api_key=byok_anthropic),
-            ChatAnthropic(model="claude-sonnet-4-6", max_tokens=2000, api_key=byok_anthropic),
-            tavily,
-        )
+        if byok_anthropic not in _byok_client_cache:
+            if len(_byok_client_cache) >= _BYOK_CACHE_MAX:
+                _byok_client_cache.pop(next(iter(_byok_client_cache)))
+            _byok_client_cache[byok_anthropic] = (
+                ChatAnthropic(model="claude-haiku-4-5-20251001", max_tokens=1000, api_key=byok_anthropic),
+                ChatAnthropic(model="claude-sonnet-4-6", max_tokens=2000, api_key=byok_anthropic),
+            )
+        fast, heavy = _byok_client_cache[byok_anthropic]
+        return fast, heavy, tavily
     return llm_fast, llm_heavy, tavily
 
 # --- Redis-based cache (survives restarts and deploys) ---
@@ -44,22 +54,27 @@ LOCAL_CACHE_MAX = 100  # max entries in L1 cache
 _cache_redis = None
 
 # --- L1: Local in-memory LRU cache (per-process, zero network cost) ---
+import threading
+
 _local_cache: dict[str, object] = {}
 _local_cache_order: list[str] = []
+_local_cache_lock = threading.Lock()
 
 
 def _local_get(key: str):
-    return _local_cache.get(key)
+    with _local_cache_lock:
+        return _local_cache.get(key)
 
 
 def _local_set(key: str, value):
-    if key in _local_cache:
-        _local_cache_order.remove(key)
-    elif len(_local_cache) >= LOCAL_CACHE_MAX:
-        evict = _local_cache_order.pop(0)
-        _local_cache.pop(evict, None)
-    _local_cache[key] = value
-    _local_cache_order.append(key)
+    with _local_cache_lock:
+        if key in _local_cache:
+            _local_cache_order.remove(key)
+        elif len(_local_cache) >= LOCAL_CACHE_MAX:
+            evict = _local_cache_order.pop(0)
+            _local_cache.pop(evict, None)
+        _local_cache[key] = value
+        _local_cache_order.append(key)
 
 
 # --- L2: Redis cache (shared across instances, survives restarts) ---
@@ -172,6 +187,18 @@ def _track(state: AgentState, node: str, start: float, response) -> dict:
     return {"node_timings": timings, "token_counts": tokens}
 
 
+class PipelineCancelled(Exception):
+    """Raised when a pipeline run is cancelled before a node starts its LLM call."""
+    pass
+
+
+def _check_cancelled(state: AgentState) -> None:
+    """Check if this run has been cancelled. Call at the start of each node to avoid wasted LLM calls."""
+    run_id = state.get("run_id")
+    if run_id and is_cancelled(run_id):
+        raise PipelineCancelled(f"Run {run_id} cancelled")
+
+
 def _is_byok(state: AgentState) -> bool:
     return bool(state.get("_byok_anthropic_key"))
 
@@ -182,6 +209,7 @@ def _get_domain(state: AgentState):
 
 
 def planner_node(state: AgentState) -> dict:
+    _check_cancelled(state)
     start = time.time()
     fast, _, _ = _get_clients(state)
     domain = _get_domain(state)
@@ -207,6 +235,7 @@ def _domain_search(query: str, provider: str, max_results: int = 2) -> dict:
 
 
 def searcher_node(state: AgentState) -> dict:
+    _check_cancelled(state)
     _, _, tavily_client = _get_clients(state)
     domain = _get_domain(state)
     existing_urls = {r["url"] for r in state.get("search_results", [])}
@@ -232,6 +261,7 @@ def searcher_node(state: AgentState) -> dict:
 
 
 def summariser_node(state: AgentState) -> dict:
+    _check_cancelled(state)
     start = time.time()
     fast, _, _ = _get_clients(state)
     already_done = set(state.get("summarised_urls", []))
@@ -286,6 +316,7 @@ def summariser_node(state: AgentState) -> dict:
 
 def outliner_node(state: AgentState) -> dict:
     """Generate a structured outline on the first pass only. Skips on revision loops."""
+    _check_cancelled(state)
     if state.get("outline"):
         return {}
 
@@ -308,10 +339,11 @@ def outliner_node(state: AgentState) -> dict:
     }
 
 
-MAX_REFLECTION_ITERATIONS = 1
+MAX_REFLECTION_ITERATIONS = 3
 
 
 def drafter_node(state: AgentState) -> dict:
+    _check_cancelled(state)
     start = time.time()
     _, heavy, _ = _get_clients(state)
     reflections = state.get("reflections", [])
@@ -354,6 +386,7 @@ def drafter_node(state: AgentState) -> dict:
 
 
 def reflection_node(state: AgentState) -> dict:
+    _check_cancelled(state)
     start = time.time()
     fast, _, _ = _get_clients(state)
     domain = _get_domain(state)
@@ -377,6 +410,8 @@ def reflection_node(state: AgentState) -> dict:
     if action not in ("accept", "revise", "research"):
         action = "accept"
     if iteration >= MAX_REFLECTION_ITERATIONS:
+        action = "accept"
+    if state.get("_skip_reflection_loop"):
         action = "accept"
 
     return {

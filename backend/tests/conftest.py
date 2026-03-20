@@ -21,10 +21,13 @@ class FakeRedis:
     def get(self, key: str) -> str | None:
         return self._store.get(key)
 
-    def set(self, key: str, value: str, ex: int | None = None) -> None:
+    def set(self, key: str, value: str, ex: int | None = None, nx: bool = False):
+        if nx and key in self._store:
+            return None
         self._store[key] = value
         if ex:
             self._ttls[key] = ex
+        return True
 
     def delete(self, key: str) -> None:
         self._store.pop(key, None)

@@ -3,7 +3,7 @@ import json
 import uuid
 
 from agent.graph import lumen_graph
-from agent.nodes import MAX_REFLECTION_ITERATIONS
+from agent.nodes import MAX_REFLECTION_ITERATIONS, PipelineCancelled
 from auth.keys import get_user_key_async
 from evals.judge import score_draft_async
 from evals.store import save_run
@@ -71,14 +71,10 @@ async def _resolve_byok(state: dict, user_id: str, byok_keys: dict | None) -> No
     """Apply BYOK keys to state in-place — from request or saved key."""
     if byok_keys:
         state.update(byok_keys)
-        print(f"[BYOK] Using request key for user {user_id[:10]}...")
     else:
         saved = await get_user_key_async(user_id)
         if saved:
             state["_byok_anthropic_key"] = saved["key"]
-            print(f"[BYOK] Loaded saved key for user {user_id[:10]}..., length={len(saved['key'])}")
-        else:
-            print(f"[BYOK] WARNING: No key found for user {user_id[:10]}...")
 
 
 async def _stream_pipeline(state: dict, run_id: str, user_id: str):
@@ -122,6 +118,9 @@ async def _stream_pipeline(state: dict, run_id: str, user_id: str):
             "token_counts": state.get("token_counts", {}),
             "run_id": run_id,
         })
+    except PipelineCancelled:
+        clear_cancelled(run_id)
+        yield _sse("cancelled", {"run_id": run_id})
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -133,23 +132,23 @@ def _classify_error(e: Exception) -> str:
     msg = str(e).lower()
     err_type = type(e).__name__.lower()
 
-    # Anthropic / LLM errors
-    if any(k in msg for k in ("anthropic", "claude", "overloaded", "rate_limit")) or \
-       any(k in err_type for k in ("anthropic", "api")):
-        return "llm"
+    # Database errors (check before LLM — some DB libs have "API" in class names)
+    if any(k in msg for k in ("supabase", "postgres", "database")):
+        return "database"
+
+    # Auth / key errors
+    if any(k in msg for k in ("authentication", "unauthorized", "token", "jwt", "clerk")):
+        return "auth"
 
     # Search provider errors
     if any(k in msg for k in ("tavily", "pubmed", "courtlistener", "edgar", "search")) or \
        any(k in err_type for k in ("httpx", "connection", "timeout")):
         return "search_provider"
 
-    # Auth / key errors
-    if any(k in msg for k in ("authentication", "unauthorized", "token", "jwt", "clerk")):
-        return "auth"
-
-    # Database errors
-    if any(k in msg for k in ("supabase", "postgres", "database")):
-        return "database"
+    # Anthropic / LLM errors (last — most generic patterns)
+    if any(k in msg for k in ("anthropic", "claude", "overloaded", "rate_limit")) or \
+       any(k in err_type for k in ("anthropic",)):
+        return "llm"
 
     return "unknown"
 
@@ -194,11 +193,12 @@ async def stream_refine(
     """Stream one additional iteration on an existing research run."""
     state = get_run_state(run_id)
     if not state:
-        yield _sse("error", {"detail": "Run not found or expired"})
+        yield _sse("error", {"code": "database", "detail": "Run not found or expired"})
         return
 
     state["should_continue"] = False
-    state["iteration"] = MAX_REFLECTION_ITERATIONS  # Forces reflection to accept immediately — single pass
+    state["iteration"] = 0
+    state["_skip_reflection_loop"] = True  # Forces reflection to accept immediately — single pass
     await _resolve_byok(state, user_id, byok_keys)
     async for chunk in _stream_pipeline(state, run_id, user_id):
         yield chunk

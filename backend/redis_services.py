@@ -79,11 +79,9 @@ def check_rate_limit(user_id: str, limit_type: str) -> tuple[bool, str]:
 
 def acquire_concurrency(user_id: str) -> bool:
     key = f"concurrent:{user_id}"
-    current = int(redis.get(key) or 0)
-    if current >= 1:
-        return False
-    redis.set(key, "1", ex=300)
-    return True
+    # Atomic: SETNX returns True only if the key didn't exist
+    result = redis.set(key, "1", nx=True, ex=300)
+    return result is not None
 
 
 def release_concurrency(user_id: str) -> None:

@@ -9,12 +9,21 @@ from upstash_redis import Redis
 from agent.prompts import JUDGE_PROMPT
 
 
+_judge_client_cache: dict[str, ChatAnthropic] = {}
+_JUDGE_CACHE_MAX = 50
+
+
 def _get_llm(api_key: str | None = None) -> ChatAnthropic:
-    """Create a judge LLM client, using BYOK key if provided."""
-    kwargs = {"model": "claude-haiku-4-5-20251001", "max_tokens": 200}
-    if api_key:
-        kwargs["api_key"] = api_key
-    return ChatAnthropic(**kwargs)
+    """Get or create a cached judge LLM client, using BYOK key if provided."""
+    cache_key = api_key or "_default"
+    if cache_key not in _judge_client_cache:
+        if len(_judge_client_cache) >= _JUDGE_CACHE_MAX:
+            _judge_client_cache.pop(next(iter(_judge_client_cache)))
+        kwargs = {"model": "claude-haiku-4-5-20251001", "max_tokens": 200}
+        if api_key:
+            kwargs["api_key"] = api_key
+        _judge_client_cache[cache_key] = ChatAnthropic(**kwargs)
+    return _judge_client_cache[cache_key]
 
 CACHE_ENABLED = os.environ.get("LUMEN_DEV_CACHE", "true").lower() == "true"
 CACHE_TTL = 604800  # 7 days
@@ -41,7 +50,8 @@ def _parse_json(text: str):
 
 def _cached_llm_invoke(prompt: str, api_key: str | None = None):
     if CACHE_ENABLED:
-        cache_key = hashlib.sha256(prompt.encode()).hexdigest()[:16]
+        key_hash = hashlib.sha256(api_key.encode()).hexdigest()[:8] if api_key else "default"
+        cache_key = hashlib.sha256(f"{prompt}:{key_hash}".encode()).hexdigest()[:16]
         try:
             data = _get_redis().get(f"cache:judge:{cache_key}")
             if data is not None:
