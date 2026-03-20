@@ -618,10 +618,10 @@ All endpoints require a Clerk JWT in the `Authorization: Bearer <token>` header 
 
 ## What I'd Build Next
 
-- **Directed refinement** — Replace "Dig Deeper" with natural language input. Feed user instructions directly into the reflection loop so users can steer the revision.
-- **Model-agnostic provider** — Let users choose Claude, GPT-4, Gemini, or local models. The pipeline graph doesn't care which LLM backs a node.
-- **Multi-agent research** — Parallel searcher subgraphs for different angles, merged before drafting. This would improve coverage on broad topics.
-- **Eval regression CI** — Automated quality checks on prompt changes. Run a fixed test set through the pipeline and fail the build if scores drop.
+- **Eval regression CI** — Automated quality checks on prompt changes. Run a fixed test set through the pipeline on every PR and fail the build if scores drop. The eval infrastructure already exists — this is wiring it into CI.
+- **Directed refinement** — Replace "Dig Deeper" with natural language input. Feed user instructions directly into the reflection loop so users can steer the revision instead of getting a generic re-run. The reflection node already accepts a critique string — directing refinement means replacing the LLM-generated critique with the user's own words.
+- **Multi-agent research** — Parallel searcher subgraphs for different angles, merged before drafting. This would improve coverage on broad topics where a single search pass misses perspectives.
+- **Provider abstraction** — Swap LLM providers per node (Claude, GPT-4, Gemini, local models). The pipeline graph doesn't care which LLM backs a node — only the client initialization changes.
 
 ## Getting Started
 
