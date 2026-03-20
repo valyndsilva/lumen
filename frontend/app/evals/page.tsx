@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect } from 'react'
+import { useAuth } from '@clerk/nextjs'
 import Link from 'next/link'
 import { fetchEvals } from '@/lib/api'
 import ScoreChart from '@/components/ScoreChart'
@@ -7,15 +8,17 @@ import EvalsTable from '@/components/EvalsTable'
 import type { EvalRun } from '@/lib/types'
 
 export default function EvalsPage() {
+  const { isLoaded } = useAuth()
   const [runs, setRuns] = useState<EvalRun[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    if (!isLoaded) return
     fetchEvals()
       .then(setRuns)
       .catch(console.error)
       .finally(() => setLoading(false))
-  }, [])
+  }, [isLoaded])
 
   // Regression detection
   let regression = false

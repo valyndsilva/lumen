@@ -63,7 +63,6 @@ export default function Home() {
   const [result, setResult] = useState<RunResult | null>(null)
   const [isRunning, setIsRunning] = useState(false)
   const [isEvaluating, setIsEvaluating] = useState(false)
-  const [currentNode, setCurrentNode] = useState<NodeName | null>(null)
   const [isRefining, setIsRefining] = useState(false)
   const [contentTab, setContentTab] = useState<'article' | 'activity'>('activity')
   const [pipelineError, setPipelineError] = useState<{ code: string; detail: string } | null>(null)
@@ -78,34 +77,38 @@ export default function Home() {
     fetchDomains().then(setDomains).catch(() => {})
   }, [])
 
-  // Restore state from sessionStorage on mount (survives navigation to /evals)
+  // Restore completed result from sessionStorage (survives navigation to /evals)
+  // Only the result is persisted — pipeline state (steps, running flags) is always transient
   useEffect(() => {
     try {
-      const saved = sessionStorage.getItem('lumen_last_run')
+      const saved = sessionStorage.getItem('lumen_last_result')
       if (saved) {
-        const { result: savedResult, steps: savedSteps, tab } = JSON.parse(saved)
-        // Only restore if there's a completed result — don't restore stuck/running states
+        const savedResult = JSON.parse(saved)
         if (savedResult) {
           setResult(savedResult)
-          if (savedSteps?.length) setSteps(savedSteps)
-          if (tab) setContentTab(tab)
+          // Derive completed steps — all nodes shown as done
+          const completedSteps: TraceStep[] = INITIAL_PASS_NODES.map(name => ({
+            id: `0-${name}`,
+            type: 'node' as const,
+            node: name,
+            status: 'complete' as const,
+            iteration: 0,
+          }))
+          setSteps(completedSteps)
+          setContentTab('article')
         }
       }
     } catch {}
   }, [])
 
-  // Save state to sessionStorage when result changes
+  // Persist only the completed result — never pipeline state
   useEffect(() => {
-    if (result) {
+    if (result && !isRunning && !isRefining && !isEvaluating) {
       try {
-        sessionStorage.setItem('lumen_last_run', JSON.stringify({
-          result,
-          steps,
-          tab: contentTab,
-        }))
+        sessionStorage.setItem('lumen_last_result', JSON.stringify(result))
       } catch {}
     }
-  }, [result, steps, contentTab])
+  }, [result, isRunning, isRefining, isEvaluating])
 
   // BYOK (Bring Your Own Keys) state
   const [hasKey, setHasKey] = useState(false)
@@ -125,8 +128,7 @@ export default function Home() {
         setRateLimitMessage('Enter your Anthropic API key to start researching.')
       }
     }).catch(() => {
-      setShowKeyModal(true)
-      setRateLimitMessage('Enter your Anthropic API key to start researching.')
+      setPipelineError({ code: 'database', detail: 'Could not connect to the server. Please refresh and try again.' })
     })
   }, [isLoaded])
   // Store the pending action so we can retry after keys are provided
@@ -152,16 +154,30 @@ export default function Home() {
     return () => window.removeEventListener('beforeunload', handleUnload)
   }, [])
 
+  // Single function to reset all pipeline state — used by cancel, error, complete, and catch
+  const resetPipeline = useCallback((opts?: { clearResult?: boolean; keepSteps?: boolean }) => {
+    setIsRunning(false)
+    setIsRefining(false)
+    setIsEvaluating(false)
+
+    if (!opts?.keepSteps) {
+      setSteps(makeInitialSteps())
+    }
+    setPipelineError(null)
+    activeRunId.current = null
+    if (opts?.clearResult) {
+      setResult(null)
+      setContentTab('activity')
+      sessionStorage.removeItem('lumen_last_result')
+    }
+  }, [])
+
   const handleCancel = useCallback(() => {
     if (activeRunId.current) {
       cancelResearch(activeRunId.current)
-      activeRunId.current = null
-      setIsRunning(false)
-      setIsRefining(false)
-      setIsEvaluating(false)
-      setCurrentNode(null)
+      resetPipeline({ clearResult: true })
     }
-  }, [])
+  }, [resetPipeline])
 
   const processNodeComplete = useCallback((
     event: { node: string; timing_ms: number | null; iteration: number; reflection_action?: string; critique?: string; meta?: Record<string, unknown> },
@@ -205,7 +221,6 @@ export default function Home() {
           if (nextIdx !== -1) {
             updated[nextIdx].status = 'running'
           }
-          setCurrentNode(nextLoopNodes[0])
         } else {
           updated.push({
             id: `decision-accept-${iteration}`,
@@ -215,41 +230,42 @@ export default function Home() {
             reflectionAction: 'accept',
             critique,
           })
-          setCurrentNode(null)
         }
       } else {
-        const currentIterNodes = iteration === 0 ? INITIAL_PASS_NODES :
+        const iterNodes = iteration === 0 ? INITIAL_PASS_NODES :
           (updated.some(s => s.id === `${iteration}-searcher`) ? RESEARCH_LOOP_NODES : REVISE_LOOP_NODES)
-        const nodeIdx = currentIterNodes.indexOf(completedNode)
-        if (nodeIdx !== -1 && nodeIdx < currentIterNodes.length - 1) {
-          const nextNode = currentIterNodes[nodeIdx + 1]
-          const nextId = `${iteration}-${nextNode}`
+        const nodeIdx = iterNodes.indexOf(completedNode)
+        if (nodeIdx !== -1 && nodeIdx < iterNodes.length - 1) {
+          const next = iterNodes[nodeIdx + 1]
+          const nextId = `${iteration}-${next}`
           const nextStepIdx = updated.findIndex(s => s.id === nextId)
           if (nextStepIdx !== -1) {
             updated[nextStepIdx].status = 'running'
           }
-          setCurrentNode(nextNode)
         }
       }
 
       return updated
     })
+
   }, [])
 
   const handleSubmit = useCallback(async (topic: string, keys?: ApiKeys | null) => {
     const effectiveKeys = keys ?? apiKeys ?? undefined
-    setIsRunning(true)
+    // Clear persisted state first — before any running flags are set
+    sessionStorage.removeItem('lumen_last_result')
     setResult(null)
+    setPipelineError(null)
+    setRefineExpired(false)
+    // Then set running state
+    setIsRunning(true)
     setIsEvaluating(false)
     setContentTab('activity')
-    setRefineExpired(false)
-    setPipelineError(null)
 
     const fresh = makeInitialSteps()
     const plannerStep = fresh.find(s => s.id === '0-planner')
     if (plannerStep) plannerStep.status = 'running'
     setSteps(fresh)
-    setCurrentNode('planner')
 
     try {
       for await (const event of streamResearch(topic, selectedDomain, effectiveKeys)) {
@@ -259,30 +275,20 @@ export default function Home() {
           processNodeComplete(event, setSteps)
         } else if (event.type === 'eval_start') {
           setIsEvaluating(true)
-          setCurrentNode(null)
+      
         } else if (event.type === 'cancelled') {
-          setIsRunning(false)
-          setCurrentNode(null)
-          activeRunId.current = null
+          resetPipeline({ clearResult: true })
         } else if (event.type === 'error') {
+          resetPipeline()
           setPipelineError({ code: event.code ?? 'unknown', detail: event.detail })
-          setIsRunning(false)
-          setCurrentNode(null)
-          activeRunId.current = null
         } else if (event.type === 'complete') {
+          resetPipeline({ keepSteps: true })
           setResult(event.data)
-          setIsRunning(false)
-          setIsEvaluating(false)
           setContentTab('article')
-          activeRunId.current = null
         }
       }
     } catch (err) {
-      setIsRunning(false)
-      setIsEvaluating(false)
-      setCurrentNode(null)
-      setSteps(makeInitialSteps())
-      activeRunId.current = null
+      resetPipeline()
       if (err instanceof RateLimitExceededError) {
         if (err.code !== 'concurrent_limit') {
           pendingAction.current = { type: 'research', topic }
@@ -293,52 +299,74 @@ export default function Home() {
         console.error('Research stream error:', err)
       }
     }
-  }, [processNodeComplete, apiKeys, selectedDomain])
+  }, [processNodeComplete, apiKeys, selectedDomain, resetPipeline])
+
+  // Track the iteration offset for refine — maps backend iteration 0 to the correct frontend pass
+  const refineIterationOffset = useRef(0)
+  const stepsRef = useRef(steps)
+  stepsRef.current = steps
 
   const handleRefine = useCallback(async (keys?: ApiKeys | null) => {
     if (!result?.run_id) return
     const effectiveKeys = keys ?? apiKeys ?? undefined
     setIsRefining(true)
     setIsEvaluating(false)
+    setRefineExpired(false)
+    setPipelineError(null)
     setContentTab('activity')
 
-    const fresh = makeInitialSteps()
-    const plannerStep = fresh.find(s => s.id === '0-planner')
-    if (plannerStep) plannerStep.status = 'running'
-    setSteps(fresh)
-    setCurrentNode('planner')
+    // Calculate next iteration from existing steps to avoid ID collision
+    const maxIteration = stepsRef.current.reduce((max, s) => Math.max(max, s.iteration), 0)
+    const refineIteration = maxIteration + 1
+    refineIterationOffset.current = refineIteration
+
+    // Add a decision marker + new pass steps, keeping previous activity
+    setSteps(prev => {
+      const updated = [...prev]
+      updated.push({
+        id: `decision-refine-${refineIteration}`,
+        type: 'reflection_decision',
+        status: 'complete',
+        iteration: maxIteration,
+        reflectionAction: 'research',
+        critique: 'Dig Deeper — additional research pass',
+      })
+      for (const name of INITIAL_PASS_NODES) {
+        updated.push({
+          id: `${refineIteration}-${name}`,
+          type: 'node',
+          node: name,
+          status: name === 'planner' ? 'running' : 'pending',
+          iteration: refineIteration,
+        })
+      }
+      return updated
+    })
 
     try {
       for await (const event of streamRefine(result.run_id, effectiveKeys)) {
         if (event.type === 'start') {
           activeRunId.current = event.run_id
         } else if (event.type === 'node_complete') {
-          processNodeComplete(event, setSteps)
+          // Remap backend iteration 0 to the refine iteration offset
+          const remapped = { ...event, iteration: event.iteration + refineIterationOffset.current }
+          processNodeComplete(remapped, setSteps)
         } else if (event.type === 'eval_start') {
           setIsEvaluating(true)
-          setCurrentNode(null)
+      
         } else if (event.type === 'cancelled') {
-          setIsRefining(false)
-          setCurrentNode(null)
-          activeRunId.current = null
+          resetPipeline({ clearResult: true })
         } else if (event.type === 'error') {
+          resetPipeline()
           setPipelineError({ code: event.code ?? 'unknown', detail: event.detail })
-          setIsRefining(false)
-          setCurrentNode(null)
-          activeRunId.current = null
         } else if (event.type === 'complete') {
+          resetPipeline({ keepSteps: true })
           setResult(event.data)
-          setIsRefining(false)
-          setIsEvaluating(false)
           setContentTab('article')
-          activeRunId.current = null
         }
       }
     } catch (err) {
-      setIsRefining(false)
-      setIsEvaluating(false)
-      setCurrentNode(null)
-      activeRunId.current = null
+      resetPipeline()
       if (err instanceof RateLimitExceededError) {
         if (err.code !== 'concurrent_limit') {
           pendingAction.current = { type: 'refine' }
@@ -351,7 +379,7 @@ export default function Home() {
         console.error('Refine stream error:', err)
       }
     }
-  }, [result?.run_id, processNodeComplete, apiKeys])
+  }, [result?.run_id, processNodeComplete, apiKeys, resetPipeline])
 
   const handleKeysSubmit = useCallback(async (keys: ApiKeys) => {
     setApiKeys(keys)
@@ -389,9 +417,7 @@ export default function Home() {
             onDismiss={hasKey ? () => {
               setShowKeyModal(false)
               pendingAction.current = null
-              setIsRunning(false)
-              setIsRefining(false)
-              setCurrentNode(null)
+              resetPipeline()
             } : undefined}
           />
         )}

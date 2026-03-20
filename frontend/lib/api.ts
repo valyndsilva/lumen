@@ -67,41 +67,51 @@ function parseSSEStream(reader: ReadableStreamDefaultReader<Uint8Array>) {
 
   return {
     async *events(): AsyncGenerator<SSEEvent> {
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        const parts = buffer.split('\n\n')
-        buffer = parts.pop() ?? ''
+      try {
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          buffer += decoder.decode(value, { stream: true })
+          const parts = buffer.split('\n\n')
+          buffer = parts.pop() ?? ''
 
-        for (const part of parts) {
-          const lines = part.trim().split('\n')
-          let eventType = ''
-          let dataStr = ''
-          for (const line of lines) {
-            if (line.startsWith('event: ')) eventType = line.slice(7)
-            if (line.startsWith('data: ')) dataStr = line.slice(6)
-          }
-          if (!eventType || !dataStr) continue
+          for (const part of parts) {
+            const lines = part.trim().split('\n')
+            let eventType = ''
+            let dataStr = ''
+            for (const line of lines) {
+              if (line.startsWith('event: ')) eventType = line.slice(7)
+              if (line.startsWith('data: ')) dataStr = line.slice(6)
+            }
+            if (!eventType || !dataStr) continue
 
-          const parsed = JSON.parse(dataStr)
+            let parsed: Record<string, unknown>
+            try {
+              parsed = JSON.parse(dataStr)
+            } catch {
+              console.warn('SSE JSON parse failed:', dataStr)
+              continue
+            }
 
-          let raw: unknown
-          if (eventType === 'start') raw = { type: 'start', ...parsed }
-          else if (eventType === 'node_complete') raw = { type: 'node_complete', ...parsed }
-          else if (eventType === 'eval_start') raw = { type: 'eval_start' }
-          else if (eventType === 'cancelled') raw = { type: 'cancelled', ...parsed }
-          else if (eventType === 'error') raw = { type: 'error', ...parsed }
-          else if (eventType === 'complete') raw = { type: 'complete', data: parsed }
-          else continue
+            let raw: unknown
+            if (eventType === 'start') raw = { type: 'start', ...parsed }
+            else if (eventType === 'node_complete') raw = { type: 'node_complete', ...parsed }
+            else if (eventType === 'eval_start') raw = { type: 'eval_start' }
+            else if (eventType === 'cancelled') raw = { type: 'cancelled', ...parsed }
+            else if (eventType === 'error') raw = { type: 'error', ...parsed }
+            else if (eventType === 'complete') raw = { type: 'complete', data: parsed }
+            else continue
 
-          const result = SSEEventSchema.safeParse(raw)
-          if (result.success) {
-            yield result.data
-          } else {
-            console.warn('SSE validation failed:', result.error.issues, raw)
+            const result = SSEEventSchema.safeParse(raw)
+            if (result.success) {
+              yield result.data
+            } else {
+              console.warn('SSE validation failed:', result.error.issues, raw)
+            }
           }
         }
+      } finally {
+        reader.cancel().catch(() => {})
       }
     }
   }
@@ -185,7 +195,8 @@ export interface KeyStatus {
 export async function checkKeys(): Promise<KeyStatus> {
   const auth = await authHeaders()
   const res = await fetch(`${API_BASE}/api/keys`, { headers: auth })
-  if (!res.ok) return { has_key: false }
+  if (res.status === 401) return { has_key: false } // Not authenticated yet
+  if (!res.ok) throw new Error(`Failed to check keys: ${res.status}`)
   return res.json()
 }
 
