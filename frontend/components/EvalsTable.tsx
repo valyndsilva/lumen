@@ -197,7 +197,7 @@ export default function EvalsTable({ runs }: EvalsTableProps) {
               <div className="flex-1 overflow-y-auto px-5 py-4">
                 <div className="prose-lumen">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {viewingRun.draft}
+                    {viewingRun.draft.replace(/\n##\s+Sources\s*\n[\s\S]*$/, '')}
                   </ReactMarkdown>
                 </div>
 

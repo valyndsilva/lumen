@@ -7,7 +7,7 @@ from pathlib import Path
 from langchain_anthropic import ChatAnthropic
 from agent.prompts import JUDGE_PROMPT
 
-llm = ChatAnthropic(model="claude-sonnet-4-6", max_tokens=200)
+llm = ChatAnthropic(model="claude-haiku-4-5-20251001", max_tokens=200)
 
 DEV_CACHE_ENABLED = os.environ.get("LUMEN_DEV_CACHE", "true").lower() == "true"
 CACHE_DIR = Path(os.path.dirname(__file__), "../../.cache")

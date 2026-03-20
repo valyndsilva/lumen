@@ -6,8 +6,8 @@ import TracePanel from '@/components/TracePanel'
 import DraftOutput from '@/components/DraftOutput'
 import ActivityFeed from '@/components/ActivityFeed'
 import ApiKeyModal from '@/components/ApiKeyModal'
-import { streamResearch, streamRefine, cancelResearch, RateLimitExceededError } from '@/lib/api'
-import type { ApiKeys } from '@/lib/api'
+import { streamResearch, streamRefine, cancelResearch, fetchDomains, RateLimitExceededError } from '@/lib/api'
+import type { ApiKeys, Domain } from '@/lib/api'
 import type { TraceStep, NodeName, RunResult, ReflectionAction } from '@/lib/types'
 import Link from 'next/link'
 
@@ -64,6 +64,17 @@ export default function Home() {
   const [currentNode, setCurrentNode] = useState<NodeName | null>(null)
   const [isRefining, setIsRefining] = useState(false)
   const [contentTab, setContentTab] = useState<'article' | 'activity'>('activity')
+  const [pipelineError, setPipelineError] = useState<string | null>(null)
+  const [refineExpired, setRefineExpired] = useState(false)
+
+  // Domain selector
+  const [domains, setDomains] = useState<Domain[]>([{ id: 'general', label: 'General Research' }])
+  const [selectedDomain, setSelectedDomain] = useState('general')
+
+  // Fetch available domains on mount
+  useEffect(() => {
+    fetchDomains().then(setDomains).catch(() => {})
+  }, [])
 
   // Restore state from sessionStorage on mount (survives navigation to /evals)
   useEffect(() => {
@@ -203,6 +214,8 @@ export default function Home() {
     setResult(null)
     setIsEvaluating(false)
     setContentTab('activity')
+    setRefineExpired(false)
+    setPipelineError(null)
 
     const fresh = makeInitialSteps()
     const plannerStep = fresh.find(s => s.id === '0-planner')
@@ -211,7 +224,7 @@ export default function Home() {
     setCurrentNode('planner')
 
     try {
-      for await (const event of streamResearch(topic, effectiveKeys)) {
+      for await (const event of streamResearch(topic, selectedDomain, effectiveKeys)) {
         if (event.type === 'start') {
           activeRunId.current = event.run_id
         } else if (event.type === 'node_complete') {
@@ -220,6 +233,11 @@ export default function Home() {
           setIsEvaluating(true)
           setCurrentNode(null)
         } else if (event.type === 'cancelled') {
+          setIsRunning(false)
+          setCurrentNode(null)
+          activeRunId.current = null
+        } else if (event.type === 'error') {
+          setPipelineError(event.detail)
           setIsRunning(false)
           setCurrentNode(null)
           activeRunId.current = null
@@ -235,15 +253,18 @@ export default function Home() {
       setIsRunning(false)
       setIsEvaluating(false)
       activeRunId.current = null
-      if (err instanceof RateLimitExceededError && (err.code === 'daily_limit' || err.code === 'global_daily_limit')) {
-        pendingAction.current = { type: 'research', topic }
-        setRateLimitMessage(err.message)
-        setShowKeyModal(true)
+      if (err instanceof RateLimitExceededError) {
+        if (err.code !== 'concurrent_limit') {
+          pendingAction.current = { type: 'research', topic }
+          setRateLimitMessage(err.message)
+          setShowKeyModal(true)
+        }
+        // concurrent_limit and rate_limit — silently ignore (user just cancelled)
       } else {
         console.error('Research stream error:', err)
       }
     }
-  }, [processNodeComplete, apiKeys])
+  }, [processNodeComplete, apiKeys, selectedDomain])
 
   const handleRefine = useCallback(async (keys?: ApiKeys | null) => {
     if (!result?.run_id) return
@@ -271,6 +292,11 @@ export default function Home() {
           setIsRefining(false)
           setCurrentNode(null)
           activeRunId.current = null
+        } else if (event.type === 'error') {
+          setPipelineError(event.detail)
+          setIsRefining(false)
+          setCurrentNode(null)
+          activeRunId.current = null
         } else if (event.type === 'complete') {
           setResult(event.data)
           setIsRefining(false)
@@ -283,10 +309,14 @@ export default function Home() {
       setIsRefining(false)
       activeRunId.current = null
       setIsEvaluating(false)
-      if (err instanceof RateLimitExceededError && (err.code === 'daily_limit' || err.code === 'global_daily_limit')) {
-        pendingAction.current = { type: 'refine' }
-        setRateLimitMessage(err.message)
-        setShowKeyModal(true)
+      if (err instanceof RateLimitExceededError) {
+        if (err.code !== 'concurrent_limit') {
+          pendingAction.current = { type: 'refine' }
+          setRateLimitMessage(err.message)
+          setShowKeyModal(true)
+        }
+      } else if (err instanceof Error && err.message.includes('not found')) {
+        setRefineExpired(true)
       } else {
         console.error('Refine stream error:', err)
       }
@@ -322,6 +352,9 @@ export default function Home() {
             onDismiss={() => {
               setShowKeyModal(false)
               pendingAction.current = null
+              setIsRunning(false)
+              setIsRefining(false)
+              setCurrentNode(null)
             }}
           />
         )}
@@ -344,9 +377,12 @@ export default function Home() {
         </Link>
         <Link
           href="/evals"
-          className="text-xs text-text-muted hover:text-accent-amber transition-colors duration-300 font-(family-name:--font-dm-mono)"
+          className="flex items-center gap-2 text-[11px] text-text-secondary hover:text-accent-amber bg-bg-elevated hover:bg-bg-elevated/80 border border-border-subtle hover:border-accent-amber/30 px-3 py-1.5 rounded-lg transition-all duration-200 font-(family-name:--font-dm-mono)"
         >
-          Eval History &rarr;
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" />
+          </svg>
+          Eval Dashboard
         </Link>
       </header>
 
@@ -356,8 +392,9 @@ export default function Home() {
           onSubmit={handleSubmit}
           onCancel={handleCancel}
           isRunning={isRunning || isRefining}
-          currentNode={currentNode}
-          isEvaluating={isEvaluating}
+          domains={domains}
+          selectedDomain={selectedDomain}
+          onDomainChange={setSelectedDomain}
         />
       </div>
 
@@ -439,8 +476,9 @@ export default function Home() {
                   draft={result.draft}
                   sources={result.sources}
                   scores={result.scores}
-                  onRefine={handleRefine}
+                  onRefine={refineExpired ? undefined : handleRefine}
                   isRefining={isRefining}
+                  refineExpired={refineExpired}
                 />
               </motion.div>
             ) : (
@@ -452,7 +490,7 @@ export default function Home() {
                 exit={{ opacity: 0, y: -4 }}
                 transition={{ duration: 0.2 }}
               >
-                <ActivityFeed steps={steps} isEvaluating={isEvaluating} />
+                <ActivityFeed steps={steps} isEvaluating={isEvaluating} error={pipelineError} />
               </motion.div>
             )}
           </AnimatePresence>

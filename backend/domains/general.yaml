@@ -1,0 +1,19 @@
+domain: general
+label: General Research
+search:
+  provider: tavily
+
+planner:
+  context: ""
+
+summariser:
+  context: ""
+
+outliner:
+  template: ""
+
+reflection:
+  rules: ""
+
+judge:
+  criteria: ""

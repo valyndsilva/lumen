@@ -4,7 +4,6 @@ import uuid
 import asyncio
 import time
 import re
-from pathlib import Path
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 load_dotenv()
@@ -15,14 +14,48 @@ from pydantic import BaseModel, field_validator
 from agent.graph import lumen_graph
 from evals.judge import score_draft
 from evals.store import init_db, save_run, get_all_runs, get_run
-
-MOCK_MODE = os.environ.get("LUMEN_MOCK", "false").lower() == "true"
+from domains import list_domains
 
 # In-memory store for run states (enables refine/dig-deeper)
+# Evicts entries older than 1 hour to prevent unbounded growth
 _run_states: dict[str, dict] = {}
+_run_timestamps: dict[str, float] = {}
+RUN_STATE_TTL = 3600  # 1 hour
+
+
+def _store_run_state(run_id: str, state: dict):
+    """Store run state with timestamp, evicting expired entries."""
+    now = time.time()
+    # Evict expired entries
+    expired = [k for k, t in _run_timestamps.items() if now - t > RUN_STATE_TTL]
+    for k in expired:
+        _run_states.pop(k, None)
+        _run_timestamps.pop(k, None)
+    _run_states[run_id] = state
+    _run_timestamps[run_id] = now
+
 
 # Cancellation registry — run_ids that should stop early
-_cancelled_runs: set[str] = {}
+# Auto-expires entries older than 5 minutes
+_cancelled_runs: dict[str, float] = {}
+CANCEL_TTL = 300  # 5 minutes
+
+
+def _mark_cancelled(run_id: str):
+    now = time.time()
+    # Evict expired cancellations
+    expired = [k for k, t in _cancelled_runs.items() if now - t > CANCEL_TTL]
+    for k in expired:
+        del _cancelled_runs[k]
+    _cancelled_runs[run_id] = now
+
+
+def _is_cancelled(run_id: str) -> bool:
+    return run_id in _cancelled_runs
+
+
+def _clear_cancelled(run_id: str):
+    _cancelled_runs.pop(run_id, None)
 
 
 # --- Rate limiter ---
@@ -39,7 +72,10 @@ class RateLimiter:
         max_window = max(w for _, w in self.tiers)
         timestamps = self._requests.get(key, [])
         timestamps = [t for t in timestamps if t > now - max_window]
-        self._requests[key] = timestamps
+        if timestamps:
+            self._requests[key] = timestamps
+        else:
+            self._requests.pop(key, None)  # evict empty IPs
         return timestamps
 
     def check(self, key: str) -> tuple[bool, str]:
@@ -57,6 +93,7 @@ class RateLimiter:
                 else:
                     return False, "rate_limit"
         timestamps.append(now)
+        self._requests[key] = timestamps
         return True, ""
 
     def remaining_daily(self, key: str) -> int:
@@ -65,7 +102,8 @@ class RateLimiter:
         if not daily_tier:
             return 999
         max_req, window = daily_tier
-        count = sum(1 for t in self._requests.get(key, []) if t > now - window)
+        timestamps = self._prune(key, now)
+        count = sum(1 for t in timestamps if t > now - window)
         return max(0, max_req - count)
 
 
@@ -85,7 +123,10 @@ class ConcurrencyLimiter:
 
     def release(self, key: str):
         current = self._active.get(key, 0)
-        self._active[key] = max(0, current - 1)
+        if current <= 1:
+            self._active.pop(key, None)  # evict when done
+        else:
+            self._active[key] = current - 1
 
 
 class GlobalCounter:
@@ -133,8 +174,8 @@ TOPIC_MAX_LENGTH = 500
 
 class ResearchRequest(BaseModel):
     topic: str
+    domain: str = "general"
     anthropic_api_key: str | None = None
-    tavily_api_key: str | None = None
 
     @field_validator("topic")
     @classmethod
@@ -159,16 +200,15 @@ class ResearchRequest(BaseModel):
 
     @property
     def is_byok(self) -> bool:
-        return bool(self.anthropic_api_key and self.tavily_api_key)
+        return bool(self.anthropic_api_key)
 
 
 class RefineRequest(BaseModel):
     anthropic_api_key: str | None = None
-    tavily_api_key: str | None = None
 
     @property
     def is_byok(self) -> bool:
-        return bool(self.anthropic_api_key and self.tavily_api_key)
+        return bool(self.anthropic_api_key)
 
 
 def get_client_ip(request: Request) -> str:
@@ -199,81 +239,6 @@ app.add_middleware(
 @app.get("/healthz")
 async def healthz():
     return {"status": "ok"}
-
-
-def _load_mock_fixture(topic: str) -> dict:
-    """Load a fixture matching the topic, or fall back to the default."""
-    fixtures_dir = Path(__file__).parent / "fixtures"
-    fixture_files = sorted(fixtures_dir.glob("mock_*.json"))
-    # Try to find a fixture whose topic matches
-    for f in fixture_files:
-        data = json.loads(f.read_text())
-        if data.get("topic", "").lower() == topic.lower():
-            return data
-    # No match — use default fixture
-    default = fixtures_dir / "mock_response.json"
-    return json.loads(default.read_text())
-
-
-async def stream_mock(topic: str):
-    """Stream a pre-recorded fixture response. Zero API calls."""
-    mock = _load_mock_fixture(topic)
-    run_id = str(uuid.uuid4())
-
-    def send(event: str, data: dict):
-        return f"event: {event}\ndata: {json.dumps(data)}\n\n"
-
-    yield send("start", {"run_id": run_id, "topic": topic})
-
-    # Simulate node completions with realistic delays
-    nodes = ["planner", "searcher", "summariser", "outliner", "drafter", "reflection"]
-    delays = {"planner": 0.3, "searcher": 0.5, "summariser": 1.0, "outliner": 0.3, "drafter": 0.8, "reflection": 0.3}
-    for node in nodes:
-        await asyncio.sleep(delays.get(node, 0.3))
-        yield send("node_complete", {
-            "node": node,
-            "timing_ms": mock["node_timings"].get(node),
-            "iteration": 1 if node == "reflection" else 0,
-        })
-
-    # Simulate eval
-    yield send("eval_start", {})
-    await asyncio.sleep(0.5)
-
-    sources = [r["url"] for r in mock["search_results"]]
-    scores = mock["scores"]
-
-    await save_run(
-        run_id, topic, mock["draft"], sources,
-        scores, mock["node_timings"], mock["token_counts"],
-    )
-
-    # Store state for potential refinement
-    _run_states[run_id] = {
-        "topic": topic,
-        "search_queries": mock.get("search_queries", []),
-        "search_results": mock["search_results"],
-        "summarised_urls": [r["url"] for r in mock["search_results"]],
-        "summaries": mock.get("summaries", []),
-        "outline": mock.get("outline", ""),
-        "draft": mock["draft"],
-        "reflection": mock.get("reflection", ""),
-        "reflections": [],
-        "reflection_action": "accept",
-        "should_continue": False,
-        "iteration": 1,
-        "node_timings": mock["node_timings"],
-        "token_counts": mock["token_counts"],
-    }
-
-    yield send("complete", {
-        "draft": mock["draft"],
-        "sources": sources,
-        "scores": scores,
-        "node_timings": mock["node_timings"],
-        "token_counts": mock["token_counts"],
-        "run_id": run_id,
-    })
 
 
 def _strip_secrets(state: dict) -> dict:
@@ -328,10 +293,11 @@ def _build_node_event(node_name: str, node_output: dict, state: dict, pre_iterat
     return event_data
 
 
-async def stream_agent(topic: str, byok_keys: dict | None = None):
+async def stream_agent(topic: str, domain: str = "general", byok_keys: dict | None = None):
     run_id = str(uuid.uuid4())
     state = {
         "topic": topic,
+        "domain": domain,
         "search_queries": [],
         "search_results": [],
         "summarised_urls": [],
@@ -355,108 +321,54 @@ async def stream_agent(topic: str, byok_keys: dict | None = None):
     def send(event: str, data: dict):
         return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
-    yield send("start", {"run_id": run_id, "topic": topic})
+    yield send("start", {"run_id": run_id, "topic": topic, "domain": domain})
 
-    # Stream through the graph
-    cancelled = False
-    async for chunk in lumen_graph.astream(state, stream_mode="updates"):
-        if run_id in _cancelled_runs:
-            _cancelled_runs.discard(run_id)
-            cancelled = True
-            yield send("cancelled", {"run_id": run_id})
-            break
-        for node_name, node_output in chunk.items():
-            if not node_output:
-                continue
-            pre_iteration = state.get("iteration", 0)
-            state.update(node_output)
-            event_data = _build_node_event(node_name, node_output, state, pre_iteration)
-            yield send("node_complete", event_data)
-            await asyncio.sleep(0)  # allow flush
+    try:
+        # Stream through the graph
+        cancelled = False
+        async for chunk in lumen_graph.astream(state, stream_mode="updates"):
+            if _is_cancelled(run_id):
+                _clear_cancelled(run_id)
+                cancelled = True
+                yield send("cancelled", {"run_id": run_id})
+                break
+            for node_name, node_output in chunk.items():
+                if not node_output:
+                    continue
+                pre_iteration = state.get("iteration", 0)
+                state.update(node_output)
+                event_data = _build_node_event(node_name, node_output, state, pre_iteration)
+                yield send("node_complete", event_data)
+                await asyncio.sleep(0)  # allow flush
 
-    if cancelled:
-        return
+        if cancelled:
+            return
 
-    # Run evals
-    yield send("eval_start", {})
-    sources = [r["url"] for r in state.get("search_results", [])]
-    scores = score_draft(topic, state.get("draft", ""), sources)
-    await save_run(
-        run_id, topic, state.get("draft", ""), sources,
-        scores, state.get("node_timings", {}), state.get("token_counts", {}),
-    )
+        # Run evals
+        yield send("eval_start", {})
+        sources = [r["url"] for r in state.get("search_results", [])]
+        scores = score_draft(topic, state.get("draft", ""), sources)
+        await save_run(
+            run_id, topic, state.get("draft", ""), sources,
+            scores, state.get("node_timings", {}), state.get("token_counts", {}),
+        )
 
-    # Dump fixture for mock reuse
-    if os.environ.get("LUMEN_DUMP_FIXTURES", "false").lower() == "true":
-        fixture = {
-            "topic": topic,
-            "search_queries": state.get("search_queries", []),
-            "search_results": state.get("search_results", []),
-            "summaries": state.get("summaries", []),
+        # Store state for potential refinement
+        _store_run_state(run_id, _strip_secrets(state))
+
+        yield send("complete", {
             "draft": state.get("draft", ""),
-            "reflection": state.get("reflection", ""),
+            "sources": sources,
             "scores": scores,
             "node_timings": state.get("node_timings", {}),
             "token_counts": state.get("token_counts", {}),
-        }
-        slug = topic.lower().replace(" ", "_")[:40]
-        dump_path = Path(__file__).parent / "fixtures" / f"mock_{slug}.json"
-        dump_path.write_text(json.dumps(fixture, indent=2))
-        print(f"[fixture] Saved to {dump_path}")
-
-    # Store state for potential refinement
-    _run_states[run_id] = _strip_secrets(state)
-
-    yield send("complete", {
-        "draft": state.get("draft", ""),
-        "sources": sources,
-        "scores": scores,
-        "node_timings": state.get("node_timings", {}),
-        "token_counts": state.get("token_counts", {}),
-        "run_id": run_id,
-    })
-
-
-async def stream_refine_mock(run_id: str):
-    """Simulate a refinement by re-streaming the same fixture data."""
-    state = _run_states.get(run_id)
-    if not state:
-        raise HTTPException(status_code=404, detail="Run not found or expired")
-
-    def send(event: str, data: dict):
-        return f"event: {event}\ndata: {json.dumps(data)}\n\n"
-
-    yield send("start", {"run_id": run_id, "topic": state["topic"]})
-
-    nodes = ["planner", "searcher", "summariser", "outliner", "drafter", "reflection"]
-    delays = {"planner": 0.3, "searcher": 0.5, "summariser": 1.0, "outliner": 0.3, "drafter": 0.8, "reflection": 0.3}
-    for node in nodes:
-        await asyncio.sleep(delays.get(node, 0.3))
-        yield send("node_complete", {
-            "node": node,
-            "timing_ms": state.get("node_timings", {}).get(node),
-            "iteration": 1,
+            "run_id": run_id,
         })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        yield send("error", {"detail": str(e)})
 
-    yield send("eval_start", {})
-    await asyncio.sleep(0.5)
-
-    sources = [r["url"] for r in state.get("search_results", [])]
-    scores = state.get("scores", {"quality": 4.0, "relevance": 4.0, "groundedness": 4.0})
-
-    await save_run(
-        run_id, state["topic"], state["draft"], sources,
-        scores, state.get("node_timings", {}), state.get("token_counts", {}),
-    )
-
-    yield send("complete", {
-        "draft": state["draft"],
-        "sources": sources,
-        "scores": scores,
-        "node_timings": state.get("node_timings", {}),
-        "token_counts": state.get("token_counts", {}),
-        "run_id": run_id,
-    })
 
 
 async def stream_refine_real(run_id: str, byok_keys: dict | None = None):
@@ -509,7 +421,7 @@ async def stream_refine_real(run_id: str, byok_keys: dict | None = None):
         )
 
         # Update stored state
-        _run_states[run_id] = _strip_secrets(state)
+        _store_run_state(run_id, _strip_secrets(state))
 
         yield send("complete", {
             "draft": state.get("draft", ""),
@@ -555,8 +467,8 @@ def _limit_message(reason: str) -> str:
     if reason == "daily_limit":
         return "You've reached the daily research limit. Add your own API keys to continue."
     elif reason == "hourly_limit":
-        return "Hourly limit reached. Try again later or add your own API keys."
-    return "Too many requests. Please wait a moment."
+        return "You've reached the hourly research limit. Add your own API keys to continue."
+    return "You've made too many requests. Add your own API keys to continue."
 
 
 @app.post("/api/research")
@@ -578,12 +490,11 @@ async def research(req: ResearchRequest, request: Request):
     if req.is_byok:
         byok_keys = {
             "_byok_anthropic_key": req.anthropic_api_key,
-            "_byok_tavily_key": req.tavily_api_key,
         }
 
     async def stream_with_release():
         try:
-            streamer = stream_mock(req.topic) if MOCK_MODE else stream_agent(req.topic, byok_keys=byok_keys)
+            streamer = stream_agent(req.topic, domain=req.domain, byok_keys=byok_keys)
             async for chunk in streamer:
                 yield chunk
         finally:
@@ -621,12 +532,11 @@ async def refine(run_id: str, req: RefineRequest, request: Request):
     if req.is_byok:
         byok_keys = {
             "_byok_anthropic_key": req.anthropic_api_key,
-            "_byok_tavily_key": req.tavily_api_key,
         }
 
     async def stream_with_release():
         try:
-            streamer = stream_refine_mock(run_id) if MOCK_MODE else stream_refine_real(run_id, byok_keys=byok_keys)
+            streamer = stream_refine_real(run_id, byok_keys=byok_keys)
             async for chunk in streamer:
                 yield chunk
         finally:
@@ -642,9 +552,14 @@ async def refine(run_id: str, req: RefineRequest, request: Request):
     )
 
 
+@app.get("/api/domains")
+async def get_domains():
+    return list_domains()
+
+
 @app.post("/api/research/{run_id}/cancel")
 async def cancel_research(run_id: str):
-    _cancelled_runs.add(run_id)
+    _mark_cancelled(run_id)
     return {"status": "cancelling", "run_id": run_id}
 
 

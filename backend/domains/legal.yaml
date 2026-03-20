@@ -1,0 +1,42 @@
+domain: legal
+label: Legal Research
+search:
+  provider: courtlistener
+
+planner:
+  context: |
+    Generate search queries targeting case law, statutes, and regulatory actions.
+    Use legal terminology (e.g., "tortious interference" not "business harm").
+    Include jurisdiction-specific terms where relevant.
+
+summariser:
+  context: |
+    Extract: jurisdiction, court level, holding, statute/regulation cited,
+    precedent relied upon, and any dissenting opinions.
+    Note the date of the decision and whether it has been overruled.
+    Distinguish between binding precedent and persuasive authority.
+
+outliner:
+  template: |
+    Structure the article as a legal research memo:
+    - Legal Framework & Applicable Statutes
+    - Key Cases & Holdings
+    - Regulatory Landscape
+    - Analysis & Risk Assessment
+    - Practical Recommendations
+
+reflection:
+  rules: |
+    Additional validation for legal content:
+    - Case citations must include court and year
+    - Distinguish between binding regulation and interpretive guidance
+    - Check that statutory analysis includes the relevant section numbers
+    - Verify that legal conclusions follow from cited precedent
+    - Flag any jurisdiction-specific limitations
+
+judge:
+  criteria: |
+    Score with legal research standards:
+    - quality: Is the legal reasoning clear and well-structured?
+    - relevance: Does it cover applicable statutes, case law, and regulations?
+    - groundedness: Are legal conclusions supported by cited authorities?

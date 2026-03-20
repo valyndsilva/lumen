@@ -12,6 +12,8 @@ from .prompts import (
     PLANNER_PROMPT, SUMMARISER_PROMPT, OUTLINER_PROMPT,
     DRAFTER_PROMPT, DRAFTER_REVISION_PROMPT, REFLECTION_PROMPT
 )
+from .search_providers import SEARCH_PROVIDERS
+from domains import load_domain
 import os
 
 from dotenv import load_dotenv
@@ -23,14 +25,13 @@ tavily = TavilyClient(api_key=os.environ.get("TAVILY_API_KEY", ""))
 
 
 def _get_clients(state: AgentState) -> tuple:
-    """Return (llm_fast, llm_heavy, tavily_client) — uses BYOK keys if present."""
+    """Return (llm_fast, llm_heavy, tavily_client) — uses BYOK Anthropic key if present."""
     byok_anthropic = state.get("_byok_anthropic_key")
-    byok_tavily = state.get("_byok_tavily_key")
-    if byok_anthropic and byok_tavily:
+    if byok_anthropic:
         return (
             ChatAnthropic(model="claude-haiku-4-5-20251001", max_tokens=1000, api_key=byok_anthropic),
             ChatAnthropic(model="claude-sonnet-4-6", max_tokens=2000, api_key=byok_anthropic),
-            TavilyClient(api_key=byok_tavily),
+            tavily,  # always use server's Tavily key
         )
     return llm_fast, llm_heavy, tavily
 
@@ -85,12 +86,21 @@ def _cached_llm_invoke(prompt: str, llm=None):
     return result
 
 
-def _parse_json(text: str):
+def _parse_json(text: str, fallback: dict | list | None = None):
     """Extract and parse JSON from LLM output, handling markdown fences."""
+    if not text or not text.strip():
+        if fallback is not None:
+            return fallback
+        raise ValueError("Empty LLM response")
     fenced = re.search(r"```(?:json)?\s*\n?(.*?)\n?\s*```", text, re.DOTALL)
     if fenced:
         text = fenced.group(1)
-    return json.loads(text.strip())
+    try:
+        return json.loads(text.strip())
+    except json.JSONDecodeError:
+        if fallback is not None:
+            return fallback
+        raise
 
 
 def _track(state: AgentState, node: str, start: float, response) -> dict:
@@ -111,28 +121,46 @@ def _is_byok(state: AgentState) -> bool:
     return bool(state.get("_byok_anthropic_key"))
 
 
+def _get_domain(state: AgentState):
+    """Load domain config from state. Cached per domain name."""
+    return load_domain(state.get("domain", "general"))
+
+
 def planner_node(state: AgentState) -> dict:
     start = time.time()
     fast, _, _ = _get_clients(state)
-    prompt = PLANNER_PROMPT.format(topic=state["topic"])
+    domain = _get_domain(state)
+    domain_ctx = f"\n{domain.planner_context}" if domain.planner_context else ""
+    prompt = PLANNER_PROMPT.format(topic=state["topic"]) + domain_ctx
     if _is_byok(state):
         response = fast.invoke(prompt)
     else:
         response = _cached_llm_invoke(prompt, llm=fast)
-    queries = _parse_json(response.content)
+    queries = _parse_json(response.content, fallback=[state["topic"]])
     return {
         "search_queries": queries,
         **_track(state, "planner", start, response),
     }
 
 
+def _domain_search(query: str, provider: str, max_results: int = 2) -> dict:
+    """Search using the domain's provider. Falls back to Tavily for 'tavily'."""
+    if provider in SEARCH_PROVIDERS:
+        return SEARCH_PROVIDERS[provider](query, max_results=max_results)
+    # Default: Tavily
+    return _cached_search(query, max_results=max_results)
+
+
 def searcher_node(state: AgentState) -> dict:
     _, _, tavily_client = _get_clients(state)
+    domain = _get_domain(state)
     existing_urls = {r["url"] for r in state.get("search_results", [])}
     results = []
     for query in state["search_queries"]:
-        if _is_byok(state):
+        if _is_byok(state) and domain.search_provider == "tavily":
             raw = tavily_client.search(query=query, max_results=2)
+        elif domain.search_provider != "tavily":
+            raw = _domain_search(query, domain.search_provider, max_results=2)
         else:
             raw = _cached_search(query, max_results=2)
         for r in raw.get("results", []):
@@ -150,7 +178,7 @@ def searcher_node(state: AgentState) -> dict:
 
 def summariser_node(state: AgentState) -> dict:
     start = time.time()
-    _, heavy, _ = _get_clients(state)
+    fast, _, _ = _get_clients(state)
     already_done = set(state.get("summarised_urls", []))
     new_results = [r for r in state["search_results"] if r["url"] not in already_done]
 
@@ -161,14 +189,16 @@ def summariser_node(state: AgentState) -> dict:
         f"[{i+1}] {r['title']}\nURL: {r['url']}\n{r['content'][:2000]}"
         for i, r in enumerate(new_results)
     )
+    domain = _get_domain(state)
+    domain_ctx = f"\n{domain.summariser_context}" if domain.summariser_context else ""
     prompt = SUMMARISER_PROMPT.format(
         topic=state["topic"],
         sources=sources_block,
-    )
+    ) + domain_ctx
     if _is_byok(state):
-        response = heavy.invoke(prompt)
+        response = fast.invoke(prompt)
     else:
-        response = _cached_llm_invoke(prompt)
+        response = _cached_llm_invoke(prompt, llm=fast)
 
     # Parse numbered summaries back into per-source entries
     raw_summaries = response.content.strip().split("\n")
@@ -206,11 +236,13 @@ def outliner_node(state: AgentState) -> dict:
 
     start = time.time()
     fast, _, _ = _get_clients(state)
+    domain = _get_domain(state)
     summaries_text = "\n\n---\n\n".join(state["summaries"])
+    domain_ctx = f"\n\nUse this structure:\n{domain.outliner_template}" if domain.outliner_template else ""
     prompt = OUTLINER_PROMPT.format(
         topic=state["topic"],
         summaries=summaries_text,
-    )
+    ) + domain_ctx
     if _is_byok(state):
         response = fast.invoke(prompt)
     else:
@@ -269,18 +301,20 @@ def drafter_node(state: AgentState) -> dict:
 def reflection_node(state: AgentState) -> dict:
     start = time.time()
     fast, _, _ = _get_clients(state)
+    domain = _get_domain(state)
     iteration = state.get("iteration", 0)
+    domain_ctx = f"\n{domain.reflection_rules}" if domain.reflection_rules else ""
     prompt = REFLECTION_PROMPT.format(
         topic=state["topic"],
         draft=state["draft"],
         iteration=iteration,
         max_iterations=MAX_REFLECTION_ITERATIONS,
-    )
+    ) + domain_ctx
     if _is_byok(state):
         response = fast.invoke(prompt)
     else:
         response = _cached_llm_invoke(prompt, llm=fast)
-    result = _parse_json(response.content)
+    result = _parse_json(response.content, fallback={"action": "accept", "critique": "Unable to evaluate — accepting draft."})
 
     action = result.get("action", "accept")
     critique = result.get("critique", "")

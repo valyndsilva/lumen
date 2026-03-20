@@ -1,0 +1,43 @@
+domain: financial
+label: Financial Analysis
+search:
+  provider: sec_edgar
+
+planner:
+  context: |
+    Generate search queries targeting SEC filings, financial data, and market analysis.
+    Use financial terminology (e.g., "EBITDA margin compression" not "profits decreasing").
+    Include ticker symbols, filing types (10-K, 10-Q, 8-K), and specific metrics.
+
+summariser:
+  context: |
+    Extract: specific financial figures with currency and time period,
+    percentage changes with basis points where relevant,
+    named companies/tickers, filing dates, and forward guidance.
+    Distinguish between GAAP and non-GAAP metrics.
+    Note the reporting period for all financial data.
+
+outliner:
+  template: |
+    Structure the article as a financial analysis:
+    - Market Context & Macro Environment
+    - Company/Sector Analysis with Key Metrics
+    - Financial Performance & Valuation
+    - Risk Factors
+    - Outlook & Investment Considerations
+
+reflection:
+  rules: |
+    Additional validation for financial content:
+    - Financial figures must include time periods and currency
+    - Percentage claims need the base value for context
+    - Distinguish between trailing and forward metrics
+    - Check that valuation comparisons use consistent metrics
+    - Flag any figures that seem outdated (>6 months old)
+
+judge:
+  criteria: |
+    Score with financial analysis standards:
+    - quality: Is the analysis structured with clear quantitative support?
+    - relevance: Does it address the financial question with specific data?
+    - groundedness: Are financial claims traceable to specific filings or data sources?

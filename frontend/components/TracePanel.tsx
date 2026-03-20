@@ -205,11 +205,6 @@ export default function TracePanel({ steps, isEvaluating, compact = false }: Tra
               )}
             </div>
             <div className="flex-1 h-px bg-border-subtle" />
-            {lastCompletedDecision?.critique && (
-              <span className="text-[10px] text-text-muted font-(family-name:--font-dm-mono) truncate max-w-[50%]">
-                {lastCompletedDecision.critique}
-              </span>
-            )}
           </motion.div>
         )}
 

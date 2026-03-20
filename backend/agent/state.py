@@ -17,6 +17,7 @@ class EvalScores(TypedDict):
 
 class AgentState(TypedDict):
     topic: str
+    domain: str                     # domain config id (general, medical, legal, financial)
     search_queries: List[str]
     search_results: Annotated[List[SearchResult], operator.add]
     summarised_urls: Annotated[List[str], operator.add]  # URLs already summarised

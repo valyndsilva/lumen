@@ -11,7 +11,7 @@ interface DraftOutputProps {
   scores?: EvalScores
   onRefine?: () => void
   isRefining?: boolean
-  isMockMode?: boolean
+  refineExpired?: boolean
 }
 
 function ScoreBar({ label, value, color, delay }: { label: string; value: number; color: string; delay: number }) {
@@ -36,7 +36,7 @@ function ScoreBar({ label, value, color, delay }: { label: string; value: number
   )
 }
 
-export default function DraftOutput({ draft, sources, scores, onRefine, isRefining, isMockMode }: DraftOutputProps) {
+export default function DraftOutput({ draft, sources, scores, onRefine, isRefining, refineExpired }: DraftOutputProps) {
   const [copied, setCopied] = useState(false)
 
   const draftWithoutSources = draft.replace(/\n##\s+Sources\s*\n[\s\S]*$/, '')
@@ -70,7 +70,11 @@ export default function DraftOutput({ draft, sources, scores, onRefine, isRefini
             Article
           </h2>
           <div className="flex items-center gap-2">
-            {onRefine && (
+            {refineExpired ? (
+              <span className="text-[11px] text-text-muted font-(family-name:--font-dm-mono)">
+                Session expired
+              </span>
+            ) : onRefine && (
               <button
                 onClick={onRefine}
                 disabled={isRefining}

@@ -5,7 +5,6 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
 
 export interface ApiKeys {
   anthropic_api_key: string
-  tavily_api_key: string
 }
 
 export interface RateLimitError {
@@ -65,6 +64,7 @@ function parseSSEStream(reader: ReadableStreamDefaultReader<Uint8Array>) {
           else if (eventType === 'node_complete') raw = { type: 'node_complete', ...parsed }
           else if (eventType === 'eval_start') raw = { type: 'eval_start' }
           else if (eventType === 'cancelled') raw = { type: 'cancelled', ...parsed }
+          else if (eventType === 'error') raw = { type: 'error', ...parsed }
           else if (eventType === 'complete') raw = { type: 'complete', data: parsed }
           else continue
 
@@ -80,11 +80,10 @@ function parseSSEStream(reader: ReadableStreamDefaultReader<Uint8Array>) {
   }
 }
 
-export async function* streamResearch(topic: string, keys?: ApiKeys): AsyncGenerator<SSEEvent> {
-  const body: Record<string, string> = { topic }
+export async function* streamResearch(topic: string, domain: string = 'general', keys?: ApiKeys): AsyncGenerator<SSEEvent> {
+  const body: Record<string, string> = { topic, domain }
   if (keys) {
     body.anthropic_api_key = keys.anthropic_api_key
-    body.tavily_api_key = keys.tavily_api_key
   }
 
   const res = await fetch(`${API_BASE}/api/research`, {
@@ -107,7 +106,6 @@ export async function* streamRefine(runId: string, keys?: ApiKeys): AsyncGenerat
   const body: Record<string, string> = {}
   if (keys) {
     body.anthropic_api_key = keys.anthropic_api_key
-    body.tavily_api_key = keys.tavily_api_key
   }
 
   const res = await fetch(`${API_BASE}/api/research/${runId}/refine`, {
@@ -126,8 +124,24 @@ export async function* streamRefine(runId: string, keys?: ApiKeys): AsyncGenerat
   yield* parseSSEStream(res.body.getReader()).events()
 }
 
-export async function cancelResearch(runId: string): Promise<void> {
-  await fetch(`${API_BASE}/api/research/${runId}/cancel`, { method: 'POST' })
+export async function cancelResearch(runId: string | null): Promise<void> {
+  if (!runId) return
+  try {
+    await fetch(`${API_BASE}/api/research/${runId}/cancel`, { method: 'POST' })
+  } catch {
+    // Ignore network errors on cancel (page might be unloading)
+  }
+}
+
+export interface Domain {
+  id: string
+  label: string
+}
+
+export async function fetchDomains(): Promise<Domain[]> {
+  const res = await fetch(`${API_BASE}/api/domains`)
+  if (!res.ok) return [{ id: 'general', label: 'General Research' }]
+  return res.json()
 }
 
 export async function fetchEvals(): Promise<EvalRun[]> {

@@ -1,11 +1,30 @@
 'use client'
-import { useRef, useEffect } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
+import ReactMarkdown from 'react-markdown'
 import type { TraceStep, NodeName } from '@/lib/types'
+
+function ExpandableText({ text, className = '' }: { text: string; className?: string }) {
+  const [expanded, setExpanded] = useState(false)
+  return (
+    <div
+      className={`cursor-pointer group ${className}`}
+      onClick={() => setExpanded(!expanded)}
+    >
+      <div className={`text-[10px] text-text-muted font-(family-name:--font-dm-mono) leading-relaxed [&_strong]:text-text-secondary [&_strong]:font-medium [&_p]:mb-1 [&_ol]:pl-4 [&_li]:mb-0.5 ${expanded ? '' : 'line-clamp-3'}`}>
+        <ReactMarkdown>{text}</ReactMarkdown>
+      </div>
+      <span className="text-[9px] text-text-muted/60 group-hover:text-accent-amber font-(family-name:--font-dm-mono) transition-colors">
+        {expanded ? 'Show less' : 'Show more'}
+      </span>
+    </div>
+  )
+}
 
 interface ActivityFeedProps {
   steps: TraceStep[]
   isEvaluating: boolean
+  error?: string | null
 }
 
 interface FeedEntry {
@@ -261,7 +280,7 @@ function EntryRow({ entry }: { entry: FeedEntry }) {
   )
 }
 
-export default function ActivityFeed({ steps, isEvaluating }: ActivityFeedProps) {
+export default function ActivityFeed({ steps, isEvaluating, error }: ActivityFeedProps) {
   const entries = buildEntries(steps)
   const groups = groupEntries(entries)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -350,9 +369,7 @@ export default function ActivityFeed({ steps, isEvaluating }: ActivityFeedProps)
                     </span>
                   </div>
                   {group.decision.detail && (
-                    <p className="text-[10px] text-text-muted mt-1.5 font-(family-name:--font-dm-mono) leading-relaxed line-clamp-3 pl-7">
-                      {group.decision.detail}
-                    </p>
+                    <ExpandableText text={group.decision.detail} className="mt-1.5 pl-7" />
                   )}
                 </div>
               )}
@@ -391,6 +408,32 @@ export default function ActivityFeed({ steps, isEvaluating }: ActivityFeedProps)
             </motion.div>
           )}
         </AnimatePresence>
+
+        {/* Error display */}
+        {error && (
+          <motion.div
+            className="mt-3 px-3 py-3 rounded-lg bg-accent-red/8 border border-accent-red/20"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3 }}
+          >
+            <div className="flex items-start gap-3">
+              <div className="w-6 h-6 rounded-full flex items-center justify-center shrink-0 mt-0.5 bg-accent-red/15 border border-accent-red/30">
+                <svg className="w-3.5 h-3.5 text-accent-red" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+                </svg>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-accent-red font-(family-name:--font-dm-sans)">
+                  Pipeline Error
+                </p>
+                <p className="text-[11px] text-text-muted mt-1 font-(family-name:--font-dm-mono) leading-relaxed">
+                  {error}
+                </p>
+              </div>
+            </div>
+          </motion.div>
+        )}
       </div>
     </div>
   )

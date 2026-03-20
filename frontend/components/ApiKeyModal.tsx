@@ -11,16 +11,14 @@ interface ApiKeyModalProps {
 
 export default function ApiKeyModal({ message, onSubmit, onDismiss }: ApiKeyModalProps) {
   const [anthropicKey, setAnthropicKey] = useState('')
-  const [tavilyKey, setTavilyKey] = useState('')
 
-  const canSubmit = anthropicKey.trim().startsWith('sk-') && tavilyKey.trim().startsWith('tvly-')
+  const canSubmit = anthropicKey.trim().startsWith('sk-')
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (canSubmit) {
       onSubmit({
         anthropic_api_key: anthropicKey.trim(),
-        tavily_api_key: tavilyKey.trim(),
       })
     }
   }
@@ -64,11 +62,11 @@ export default function ApiKeyModal({ message, onSubmit, onDismiss }: ApiKeyModa
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v.01M12 9v3m-7 4h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2z" />
             </svg>
             <span className="text-[11px] text-text-secondary font-(family-name:--font-dm-sans) font-medium">
-              Your keys are never stored
+              Your key is never stored
             </span>
           </div>
           <p className="text-[10px] text-text-muted font-(family-name:--font-dm-mono) leading-relaxed">
-            Keys are sent per-request and used only for this session. They are not logged, persisted, or sent to any third party.
+            Your key is sent per-request and used only for this session. It is not logged, persisted, or sent to any third party.
           </p>
         </div>
 
@@ -86,26 +84,13 @@ export default function ApiKeyModal({ message, onSubmit, onDismiss }: ApiKeyModa
             />
           </div>
 
-          <div>
-            <label className="text-[11px] text-text-muted uppercase tracking-wider font-(family-name:--font-dm-mono) mb-1.5 block">
-              Tavily API Key
-            </label>
-            <input
-              type="password"
-              value={tavilyKey}
-              onChange={(e) => setTavilyKey(e.target.value)}
-              placeholder="tvly-..."
-              className="w-full h-9 bg-bg-primary border border-border-default rounded-lg px-3 text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent-amber/40 focus:border-accent-amber/40 font-(family-name:--font-dm-mono)"
-            />
-          </div>
-
           <div className="flex gap-2 pt-1">
             <button
               type="submit"
               disabled={!canSubmit}
               className="flex-1 h-9 rounded-lg text-xs font-medium bg-accent-amber text-bg-primary hover:shadow-[0_0_24px_rgba(226,164,59,0.25)] disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-300 font-(family-name:--font-dm-sans)"
             >
-              Continue with my keys
+              Continue with my key
             </button>
             <button
               type="button"
@@ -117,23 +102,14 @@ export default function ApiKeyModal({ message, onSubmit, onDismiss }: ApiKeyModa
           </div>
         </form>
 
-        <div className="mt-3 flex gap-3 justify-center">
+        <div className="mt-3 flex justify-center">
           <a
             href="https://console.anthropic.com/"
             target="_blank"
             rel="noopener noreferrer"
             className="text-[10px] text-text-muted hover:text-accent-amber transition-colors font-(family-name:--font-dm-mono)"
           >
-            Get Anthropic key
-          </a>
-          <span className="text-[10px] text-border-default">|</span>
-          <a
-            href="https://tavily.com/"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-[10px] text-text-muted hover:text-accent-amber transition-colors font-(family-name:--font-dm-mono)"
-          >
-            Get Tavily key
+            Get an Anthropic API key
           </a>
         </div>
       </motion.div>

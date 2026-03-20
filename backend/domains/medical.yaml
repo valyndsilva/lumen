@@ -1,0 +1,42 @@
+domain: medical
+label: Medical Research
+search:
+  provider: pubmed
+
+planner:
+  context: |
+    Generate search queries using medical/scientific terminology.
+    Use MeSH terms where appropriate (e.g., "neoplasms" not "cancer").
+    Target clinical trials, systematic reviews, and meta-analyses.
+
+summariser:
+  context: |
+    Extract: study design (RCT, cohort, meta-analysis), sample size,
+    key outcomes with p-values or confidence intervals, adverse events.
+    Note if the source is a preprint vs peer-reviewed publication.
+    Distinguish between primary research and review articles.
+
+outliner:
+  template: |
+    Structure the article as a medical literature review:
+    - Background & Clinical Context
+    - Current Evidence (organized by study quality)
+    - Key Findings & Statistical Significance
+    - Clinical Implications
+    - Limitations & Future Research
+
+reflection:
+  rules: |
+    Additional validation for medical content:
+    - Claims must cite specific studies, not general statements
+    - Statistical claims need p-values or confidence intervals
+    - Distinguish correlation from causation
+    - Flag if evidence comes from a single study vs multiple
+    - Check for appropriate caveats (e.g., "in this population")
+
+judge:
+  criteria: |
+    Score with medical research standards:
+    - quality: Is it structured as a proper literature review?
+    - relevance: Does it cover the clinical question comprehensively?
+    - groundedness: Are claims backed by cited studies with sample sizes?
