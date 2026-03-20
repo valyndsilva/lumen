@@ -98,7 +98,7 @@ Only the Drafter uses Claude Sonnet 4.6. Every other node — including the judg
 | **Reflection** | Haiku 4.5 | JSON classification (accept/revise/research) with critique text. |
 | **Judge** | Haiku 4.5 | Outputs 3 numbers in JSON. |
 
-**Cost per run:** ~$0.05 with user's own API key.
+**Cost per run:** ~$0.05 for a single-pass run with user's own API key. Worst case with 3 reflection iterations: ~$0.10-0.15.
 
 ## Domain-Specific Research
 
@@ -167,7 +167,7 @@ For page-unload cancellation, the frontend sends a `fetch` request with `keepali
 | `eval_start` | Scoring begins | `{}` |
 | `complete` | Pipeline done | `{draft, sources, scores, node_timings, token_counts, run_id}` |
 | `cancelled` | Pipeline stopped | `{run_id}` |
-| `error` | Pipeline failed | `{detail}` |
+| `error` | Pipeline failed | `{code, detail}` — codes: `llm`, `search_provider`, `auth`, `database`, `unknown` |
 
 ## Caching
 
@@ -177,7 +177,7 @@ Request → L1 Local LRU (0ms) → L2 Redis (2ms) → LLM API (10-60s)
 
 LLM responses are cached in two tiers. The local LRU (100 entries, per-process) handles repeated prompts with zero network calls. On L1 miss, Redis serves as a shared persistent cache across instances with 7-day TTL.
 
-On a fresh topic, ~12 Redis commands are used (6 GET misses + 6 SET writes). On a repeated topic from the same server, 0 Redis commands — everything served from L1. The tradeoff: L1 is lost on restart, but that's by design — Redis is the durable layer, L1 is a hot-path optimiser.
+The cache is designed for development and shared-key scenarios — BYOK users bypass LLM caching entirely since each user's API key produces different billing context. For non-BYOK usage (server key), a fresh topic uses ~12 Redis commands (6 GET misses + 6 SET writes) and a repeated topic from the same server uses 0 — everything served from L1. The tradeoff: L1 is lost on restart, but that's by design — Redis is the durable layer, L1 is a hot-path optimiser.
 
 Additional cost controls in the pipeline:
 - Batched summariser (1 LLM call for all sources per iteration, not 1 per source)
@@ -203,13 +203,13 @@ Rate limits use Redis sorted sets (sliding window) so they work across horizonta
 
 | Failure | Impact | Mitigation |
 |---------|--------|------------|
-| **Clerk down** | Users can't sign in or make API calls | JWT tokens are cached client-side; existing sessions continue until token expires (~1 hour) |
+| **Clerk down** | Users can't sign in; token refresh fails | Clerk JWTs expire in ~60 seconds. Existing sessions break quickly unless Clerk recovers. No local fallback. |
 | **Supabase down** | Can't save articles or fetch evals; key lookup fails | Redis key cache serves keys for 5 min. Pipeline still runs — just can't persist results |
 | **Upstash Redis down** | No rate limiting, no run state, no cache | Pipeline still runs (cache miss = direct LLM call). Rate limits fail-open. Dig Deeper won't work (no saved state) |
 | **Claude API down** | Pipeline fails at first LLM node | SSE `error` event streamed to frontend. User's key is not charged for failed calls |
 | **Domain search provider down** | That domain's search fails | SSE `error` event. Other domains unaffected — each has an independent provider |
 
-The design principle: **fail-open on guards, fail-visible on data.** Rate limiting and caching fail silently (allow the request through). Data operations fail with a clear error to the user.
+The design principle: **fail-open on guards, fail-visible on data.** Rate limiting and caching fail silently (allow the request through). Data operations fail with a classified error — the backend categorises exceptions into error codes (`llm`, `search_provider`, `auth`, `database`, `unknown`) and the frontend maps each code to a user-friendly message with an actionable hint (e.g. "Search Provider Unavailable — try a different research domain").
 
 ## Frontend
 
@@ -258,7 +258,7 @@ The backend is split into focused modules with single responsibilities:
 | `evals/` | LLM-as-judge scoring and Supabase persistence |
 | `domains/` | YAML domain configs |
 
-The pipeline is infrastructure-agnostic. Swapping Redis for Memcached or Supabase for any Postgres provider requires changing only `evals/store.py` and `redis_services.py`. The agentic layer is untouched.
+The pipeline is infrastructure-agnostic. Swapping Redis or Supabase requires changing `redis_services.py`, `evals/store.py`, and `auth/keys.py`. The agentic layer (`agent/`, `domains/`, `streaming.py`) is untouched.
 
 ## Testing
 
@@ -419,7 +419,7 @@ sequenceDiagram
         Graph->>LLM: Drafter (Sonnet) with accumulated critique
         Graph->>LLM: Reflection (Haiku)
     else action = research
-        Note over Graph: Pass 2: Searcher → Summariser → Outliner → Drafter → Reflection
+        Note over Graph: Pass 2: Searcher → Summariser → Drafter → Reflection<br/>(Outliner skipped — outline already exists)
         Graph->>Search: Searcher (new gap queries)
         Graph->>LLM: Summariser (new sources only)
         Graph->>LLM: Drafter (Sonnet) with new evidence + critique
