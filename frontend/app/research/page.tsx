@@ -7,7 +7,7 @@ import TracePanel from '@/components/TracePanel'
 import DraftOutput from '@/components/DraftOutput'
 import ActivityFeed from '@/components/ActivityFeed'
 import ApiKeyModal from '@/components/ApiKeyModal'
-import { streamResearch, streamRefine, cancelResearch, fetchDomains, checkKeys, saveKey, getCachedAuthToken, RateLimitExceededError } from '@/lib/api'
+import { streamResearch, streamRefine, cancelResearch, fetchDomains, checkKeys, saveKey, RateLimitExceededError } from '@/lib/api'
 import type { ApiKeys, Domain } from '@/lib/api'
 import type { TraceStep, NodeName, RunResult, ReflectionAction } from '@/lib/types'
 import Link from 'next/link'
@@ -135,31 +135,24 @@ export default function Home() {
   const pendingAction = useRef<{ type: 'research'; topic: string } | { type: 'refine' } | null>(null)
   // Track active run for cancellation
   const activeRunId = useRef<string | null>(null)
+  const abortControllerRef = useRef<AbortController | null>(null)
 
-  // Auto-cancel on page refresh/close
+  // Page close/refresh — send cancel POST since AbortController doesn't survive unload
   useEffect(() => {
     const handleUnload = () => {
       if (activeRunId.current) {
-        const url = `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'}/api/research/${activeRunId.current}/cancel`
-        const token = getCachedAuthToken()
-        // Use fetch with keepalive to include auth headers (sendBeacon can't)
-        fetch(url, {
-          method: 'POST',
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-          keepalive: true,
-        }).catch(() => {})
+        cancelResearch(activeRunId.current)
       }
     }
     window.addEventListener('beforeunload', handleUnload)
     return () => window.removeEventListener('beforeunload', handleUnload)
   }, [])
 
-  // Single function to reset all pipeline state — used by cancel, error, complete, and catch
+  // Single function to reset all pipeline state
   const resetPipeline = useCallback((opts?: { clearResult?: boolean; keepSteps?: boolean }) => {
     setIsRunning(false)
     setIsRefining(false)
     setIsEvaluating(false)
-
     if (!opts?.keepSteps) {
       setSteps(makeInitialSteps())
     }
@@ -173,10 +166,14 @@ export default function Home() {
   }, [])
 
   const handleCancel = useCallback(() => {
+    // Abort the fetch — kills SSE stream, FastAPI detects disconnect
+    abortControllerRef.current?.abort()
+    abortControllerRef.current = null
+    // Also set Redis flag for any in-flight LLM call
     if (activeRunId.current) {
       cancelResearch(activeRunId.current)
-      resetPipeline({ clearResult: true })
     }
+    resetPipeline({ clearResult: true })
   }, [resetPipeline])
 
   const processNodeComplete = useCallback((
@@ -262,13 +259,16 @@ export default function Home() {
     setIsEvaluating(false)
     setContentTab('activity')
 
+    const controller = new AbortController()
+    abortControllerRef.current = controller
+
     const fresh = makeInitialSteps()
     const plannerStep = fresh.find(s => s.id === '0-planner')
     if (plannerStep) plannerStep.status = 'running'
     setSteps(fresh)
 
     try {
-      for await (const event of streamResearch(topic, selectedDomain, effectiveKeys)) {
+      for await (const event of streamResearch(topic, selectedDomain, effectiveKeys, controller.signal)) {
         if (event.type === 'start') {
           activeRunId.current = event.run_id
         } else if (event.type === 'node_complete') {
@@ -288,6 +288,7 @@ export default function Home() {
         }
       }
     } catch (err) {
+      if (!activeRunId.current) return // User cancelled — resetPipeline already handled cleanup
       resetPipeline()
       if (err instanceof RateLimitExceededError) {
         if (err.code !== 'concurrent_limit') {
@@ -343,8 +344,11 @@ export default function Home() {
       return updated
     })
 
+    const controller = new AbortController()
+    abortControllerRef.current = controller
+
     try {
-      for await (const event of streamRefine(result.run_id, effectiveKeys)) {
+      for await (const event of streamRefine(result.run_id, effectiveKeys, controller.signal)) {
         if (event.type === 'start') {
           activeRunId.current = event.run_id
         } else if (event.type === 'node_complete') {
@@ -366,6 +370,7 @@ export default function Home() {
         }
       }
     } catch (err) {
+      if (!activeRunId.current) return // User cancelled — resetPipeline already handled cleanup
       resetPipeline()
       if (err instanceof RateLimitExceededError) {
         if (err.code !== 'concurrent_limit') {

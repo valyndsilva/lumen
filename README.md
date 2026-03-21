@@ -154,7 +154,7 @@ BYOK shifts the most expensive operational cost — LLM inference — to the use
 
 The frontend receives pipeline progress via Server-Sent Events. Each node completion fires an SSE event with timing, iteration number, and node-specific metadata (search result previews, word counts, reflection decisions). This gives the user a live view of every step as it happens.
 
-I chose SSE over WebSockets because the data flow is unidirectional (server → client), SSE reconnects automatically on network drops, and it works through standard HTTP infrastructure without upgrade negotiation. Cancellation is implemented as a Redis flag (`cancel:{run_id}`) — each node checks the flag before starting its LLM call, and the streaming layer checks it between nodes. The worst case is waiting for one in-flight LLM call to finish.
+I chose SSE over WebSockets because the data flow is unidirectional (server → client), SSE reconnects automatically on network drops, and it works through standard HTTP infrastructure without upgrade negotiation. Cancellation works at two levels: the frontend aborts the SSE fetch via `AbortController` for instant UI response, while the backend uses a Redis flag (`cancel:{run_id}`) checked at each node start and between nodes to prevent further LLM calls. The worst case is one in-flight call completing before the flag is checked.
 
 For page-unload cancellation, the frontend sends a `fetch` request with `keepalive: true` and a cached auth token. This replaced an earlier `sendBeacon` approach that couldn't include Authorization headers, which meant the cancel endpoint (which requires auth) would always reject it.
 
@@ -464,21 +464,20 @@ sequenceDiagram
     Note over Graph: Pipeline running...
 
     User->>FE: Click "Cancel"
-    FE->>API: POST /api/research/{run_id}/cancel (JWT)
+    FE->>FE: AbortController.abort() — SSE stream killed instantly
+    FE->>API: POST /api/research/{run_id}/cancel (sync, cached token)
     API->>Redis: SET cancel:{run_id} (TTL 5m)
-    API-->>FE: {status: "cancelling"}
 
-    Note over Graph: Between nodes,<br/>API checks Redis flag
+    Note over FE: UI resets immediately.<br/>No waiting for backend.
 
-    Graph-->>API: Node complete
-    API->>Redis: EXISTS cancel:{run_id}
-    Redis-->>API: true
-    API-->>FE: SSE cancelled
+    Note over Graph: Next node checks Redis flag<br/>before starting LLM call
+
+    Graph->>Graph: _check_cancelled() → PipelineCancelled
     API->>Redis: Release concurrency lock
 
-    Note over FE: Pipeline stopped.<br/>No eval scoring.<br/>No API credits wasted.
+    Note over Graph: Pipeline stopped.<br/>At most 1 in-flight call completes.
 
-    Note right of FE: On page refresh/close:<br/>fetch(keepalive) fires cancel<br/>with auth header
+    Note right of FE: On page refresh/close:<br/>fetch(keepalive) fires cancel<br/>with cached auth header
 ```
 
 ### 4. Refinement Flow ("Dig Deeper")
@@ -558,7 +557,7 @@ This shows the three distinct paths in action: `research` triggers a full re-sea
 - **Encrypted key storage** — User API keys encrypted with Fernet, cached in Redis (encrypted form), decrypted per-request only
 - **Rate limiting** — 5/min per user + 1 concurrent pipeline via Upstash Redis
 - **Input validation** — 3-500 character topics with prompt injection blocking
-- **Pipeline cancellation** — Cancel button + `fetch(keepalive)` with auth on page unload; Redis flag checked at each node start and between nodes; cancellation fully resets frontend state and clears sessionStorage
+- **Pipeline cancellation** — Cancel aborts SSE fetch instantly (AbortController) + sets Redis flag via sync POST; Redis flag checked at each node start and between nodes; page-unload uses `fetch(keepalive)` with cached auth; cancellation fully resets frontend state and clears sessionStorage
 - **SSE validation** — Zod discriminated union schemas on all streaming events
 - **Source deduplication** — No duplicate URLs across search iterations
 - **Cost controls** — BYOK (zero operator LLM cost), Haiku for 5/6 nodes, batching, caching

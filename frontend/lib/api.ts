@@ -117,7 +117,7 @@ function parseSSEStream(reader: ReadableStreamDefaultReader<Uint8Array>) {
   }
 }
 
-export async function* streamResearch(topic: string, domain: string = 'general', keys?: ApiKeys): AsyncGenerator<SSEEvent> {
+export async function* streamResearch(topic: string, domain: string = 'general', keys?: ApiKeys, signal?: AbortSignal): AsyncGenerator<SSEEvent> {
   const body: Record<string, string> = { topic, domain }
   if (keys) {
     body.anthropic_api_key = keys.anthropic_api_key
@@ -128,6 +128,7 @@ export async function* streamResearch(topic: string, domain: string = 'general',
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...auth },
     body: JSON.stringify(body),
+    signal,
   })
 
   if (res.status === 429) await handleRateLimit(res)
@@ -140,7 +141,7 @@ export async function* streamResearch(topic: string, domain: string = 'general',
   yield* parseSSEStream(res.body.getReader()).events()
 }
 
-export async function* streamRefine(runId: string, keys?: ApiKeys): AsyncGenerator<SSEEvent> {
+export async function* streamRefine(runId: string, keys?: ApiKeys, signal?: AbortSignal): AsyncGenerator<SSEEvent> {
   const body: Record<string, string> = {}
   if (keys) {
     body.anthropic_api_key = keys.anthropic_api_key
@@ -151,6 +152,7 @@ export async function* streamRefine(runId: string, keys?: ApiKeys): AsyncGenerat
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...auth },
     body: JSON.stringify(body),
+    signal,
   })
 
   if (res.status === 429) await handleRateLimit(res)
@@ -163,14 +165,12 @@ export async function* streamRefine(runId: string, keys?: ApiKeys): AsyncGenerat
   yield* parseSSEStream(res.body.getReader()).events()
 }
 
-export async function cancelResearch(runId: string | null): Promise<void> {
+export function cancelResearch(runId: string | null): void {
   if (!runId) return
-  try {
-    const auth = await authHeaders()
-    await fetch(`${API_BASE}/api/research/${runId}/cancel`, { method: 'POST', headers: auth })
-  } catch {
-    // Ignore network errors on cancel (page might be unloading)
-  }
+  // Use cached token (sync) instead of authHeaders (async) — cancel must be immediate
+  const token = getCachedAuthToken()
+  const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
+  fetch(`${API_BASE}/api/research/${runId}/cancel`, { method: 'POST', headers, keepalive: true }).catch(() => {})
 }
 
 export interface Domain {

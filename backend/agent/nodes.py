@@ -210,6 +210,7 @@ def _get_domain(state: AgentState):
 
 def planner_node(state: AgentState) -> dict:
     _check_cancelled(state)
+
     start = time.time()
     fast, _, _ = _get_clients(state)
     domain = _get_domain(state)
@@ -236,6 +237,7 @@ def _domain_search(query: str, provider: str, max_results: int = 2) -> dict:
 
 def searcher_node(state: AgentState) -> dict:
     _check_cancelled(state)
+
     _, _, tavily_client = _get_clients(state)
     domain = _get_domain(state)
     existing_urls = {r["url"] for r in state.get("search_results", [])}
@@ -262,6 +264,7 @@ def searcher_node(state: AgentState) -> dict:
 
 def summariser_node(state: AgentState) -> dict:
     _check_cancelled(state)
+
     start = time.time()
     fast, _, _ = _get_clients(state)
     already_done = set(state.get("summarised_urls", []))
@@ -317,6 +320,7 @@ def summariser_node(state: AgentState) -> dict:
 def outliner_node(state: AgentState) -> dict:
     """Generate a structured outline on the first pass only. Skips on revision loops."""
     _check_cancelled(state)
+
     if state.get("outline"):
         return {}
 
@@ -344,6 +348,7 @@ MAX_REFLECTION_ITERATIONS = 3
 
 def drafter_node(state: AgentState) -> dict:
     _check_cancelled(state)
+
     start = time.time()
     _, heavy, _ = _get_clients(state)
     reflections = state.get("reflections", [])
@@ -387,6 +392,7 @@ def drafter_node(state: AgentState) -> dict:
 
 def reflection_node(state: AgentState) -> dict:
     _check_cancelled(state)
+
     start = time.time()
     fast, _, _ = _get_clients(state)
     domain = _get_domain(state)
