@@ -19,7 +19,7 @@ def _get_llm(api_key: str | None = None) -> ChatAnthropic:
     if cache_key not in _judge_client_cache:
         if len(_judge_client_cache) >= _JUDGE_CACHE_MAX:
             _judge_client_cache.pop(next(iter(_judge_client_cache)))
-        kwargs = {"model": "claude-haiku-4-5-20251001", "max_tokens": 200}
+        kwargs = {"model": "claude-haiku-4-5-20251001", "max_tokens": 300}
         if api_key:
             kwargs["api_key"] = api_key
         _judge_client_cache[cache_key] = ChatAnthropic(**kwargs)

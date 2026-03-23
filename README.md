@@ -81,9 +81,14 @@ Critique accumulates in `reflections[]` via LangGraph's `operator.add`. The draf
 
 ### Post-Pipeline Evaluation
 
-After the pipeline completes, the draft is scored by an LLM-as-judge (Haiku 4.5) on quality, relevance, and groundedness (1-5). Scores are persisted to Supabase alongside the article and source URLs, linked to the authenticated user.
+After the pipeline completes, the draft is scored by an LLM-as-judge (Haiku 4.5) on four dimensions:
 
-This gives us a built-in regression signal. If a prompt change degrades output quality, the eval dashboard shows it immediately across runs.
+- **Quality** (1-5) — clarity, structure, insight
+- **Relevance** (1-5) — how thoroughly the topic is addressed
+- **Groundedness** (1-5) — whether claims are supported by sources
+- **Evidence strength** — classified as `high`, `medium`, or `low` based on source quality, consistency, and coverage
+
+Scores are persisted to Supabase alongside the article and source URLs, linked to the authenticated user. This gives us a built-in regression signal — if a prompt change degrades output quality, the eval dashboard shows it immediately across runs.
 
 ## Model Split Strategy
 
@@ -96,7 +101,7 @@ Only the Drafter uses Claude Sonnet 4.6. Every other node — including the judg
 | **Outliner** | Haiku 4.5 | Bullet-point outline with source assignments. |
 | **Drafter** | Sonnet 4.6 | The one node where model quality directly affects user-facing output — long-form writing, citations, professional tone. |
 | **Reflection** | Haiku 4.5 | JSON classification (accept/revise/research) with critique text. |
-| **Judge** | Haiku 4.5 | Outputs 3 numbers in JSON. |
+| **Judge** | Haiku 4.5 | Scores quality, relevance, groundedness (1-5) and classifies evidence strength (high/medium/low). |
 
 **Cost per run:** ~$0.05 for a single-pass run with user's own API key. Worst case with 3 reflection iterations: ~$0.15.
 
@@ -128,7 +133,7 @@ The hardest problem in agentic systems isn't the model — it's context. An agen
 | **Summariser** | Batched extraction lets the model see all sources together and identify contradictions |
 | **Outliner** | Maps sources to sections — the drafter doesn't guess which evidence supports which claim |
 | **Reflection** | Catches gaps, unsupported claims, and structural issues before delivery |
-| **Judge** | Makes quality visible — a low groundedness score signals weak citations |
+| **Judge** | Makes quality visible — a low groundedness score signals weak citations; evidence strength classification flags unreliable results |
 
 The reflection loop is the critical layer. Without it, the pipeline is a one-shot generator. With it, the system self-corrects through up to 3 iterations of targeted revision or research.
 
@@ -442,7 +447,7 @@ sequenceDiagram
 
     Note over API: Evaluate & Persist
     API-->>FE: SSE eval_start
-    API->>LLM: Judge (Haiku) → quality, relevance, groundedness
+    API->>LLM: Judge (Haiku) → quality, relevance, groundedness, evidence strength
     API->>DB: Save article + scores + sources (user_id)
     API->>Redis: Store run state (TTL 1h)
     API-->>FE: SSE complete (article + scores)
@@ -660,6 +665,7 @@ CREATE TABLE runs (
     latency_ms INTEGER,
     total_tokens INTEGER,
     estimated_cost_usd FLOAT,
+    evidence_strength TEXT,
     node_timings JSONB DEFAULT '{}',
     token_counts JSONB DEFAULT '{}'
 );

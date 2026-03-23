@@ -85,10 +85,14 @@ Return ONLY JSON:
 
 Be specific — point to exact sections or claims."""
 
-JUDGE_PROMPT = """Score this research draft on three dimensions (1.0-5.0):
+JUDGE_PROMPT = """Score this research draft on three dimensions (1.0-5.0) and classify evidence strength:
 - quality: clear, well-structured, insightful?
 - relevance: thoroughly addresses the topic?
 - groundedness: claims supported by sources?
+- evidence_strength: classify as "high", "medium", or "low"
+  - high: multiple high-quality sources, consistent findings
+  - medium: some supporting evidence, minor gaps
+  - low: weak, sparse, or conflicting evidence
 
 Topic: {topic}
 
@@ -99,4 +103,4 @@ Draft:
 
 Sources: {sources}
 
-Return ONLY JSON: {{"quality": 4.2, "relevance": 3.8, "groundedness": 4.5}}"""
+Return ONLY JSON: {{"quality": 4.2, "relevance": 3.8, "groundedness": 4.5, "evidence_strength": "high"}}"""

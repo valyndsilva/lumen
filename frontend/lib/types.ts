@@ -17,10 +17,14 @@ export interface TraceNode {
 
 // --- Eval scores ---
 
+export const EvidenceStrengthSchema = z.enum(['high', 'medium', 'low'])
+export type EvidenceStrength = z.infer<typeof EvidenceStrengthSchema>
+
 export const EvalScoresSchema = z.object({
   quality: z.number().min(0).max(5),
   relevance: z.number().min(0).max(5),
   groundedness: z.number().min(0).max(5),
+  evidence_strength: EvidenceStrengthSchema.optional().default('medium'),
 })
 export type EvalScores = z.infer<typeof EvalScoresSchema>
 
@@ -54,6 +58,7 @@ export const EvalRunSchema = z.object({
   quality: flexNum,
   relevance: flexNum,
   groundedness: flexNum,
+  evidence_strength: z.string().nullable().optional(),
   latency_ms: flexNum,
   total_tokens: flexNum,
   estimated_cost_usd: flexNum,
