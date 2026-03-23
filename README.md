@@ -90,6 +90,23 @@ After the pipeline completes, the draft is scored by an LLM-as-judge (Haiku 4.5)
 
 Scores are persisted to Supabase alongside the article and source URLs, linked to the authenticated user. This gives us a built-in regression signal — if a prompt change degrades output quality, the eval dashboard shows it immediately across runs.
 
+### Component-Level Source Evaluation
+
+Alongside the LLM judge, a deterministic source trustworthiness eval runs on every pipeline completion — zero LLM calls, zero cost. It checks whether the searcher pulled from trusted domains for the given research domain:
+
+| Domain | Trusted sources | Examples |
+|--------|----------------|---------|
+| **Medical** | Government health agencies, major journals | NIH, WHO, Lancet, NEJM, Nature, BMJ |
+| **Legal** | Court databases, law schools | CourtListener, Cornell Law, SCOTUS, DOJ |
+| **Financial** | SEC, financial data providers | SEC EDGAR, Yahoo Finance, Reuters, Bloomberg |
+| **General** | Academic publishers, encyclopedias, major news, .edu, .gov | Wikipedia, arxiv, Nature, Reuters, BBC, AP, Stanford, NASA |
+
+The eval computes a `trusted_ratio` (trusted sources / total sources) and persists it per run. The frontend shows the ratio as a color-coded badge: green (≥80% trusted), amber (≥50%), red (<50%).
+
+This gives two evaluation layers that answer different questions:
+- **LLM judge** → "Is the output good?" (subjective, per-run)
+- **Source eval** → "Is the input reliable?" (objective, deterministic)
+
 ## Model Split Strategy
 
 Only the Drafter uses Claude Sonnet 4.6. Every other node — including the judge — runs on Claude Haiku 4.5. The reasoning is straightforward: the drafter is the only node where model quality directly affects user-facing output. Every other node produces structured, constrained output where Haiku performs well. This split cuts cost by ~75% compared to running Sonnet everywhere.
@@ -260,14 +277,14 @@ The backend is split into focused modules with single responsibilities:
 | `redis_services.py` | Run state, cancellation flags, rate limiting, concurrency locks |
 | `streaming.py` | SSE event formatting, pipeline orchestration |
 | `agent/` | LangGraph pipeline — nodes, graph, prompts, search providers |
-| `evals/` | LLM-as-judge scoring and Supabase persistence |
+| `evals/` | LLM-as-judge scoring, source trustworthiness eval, and Supabase persistence |
 | `domains/` | YAML domain configs |
 
 The pipeline is infrastructure-agnostic. Swapping Redis or Supabase requires changing `redis_services.py`, `evals/store.py`, and `auth/keys.py`. The agentic layer (`agent/`, `domains/`, `streaming.py`) is untouched.
 
 ## Testing
 
-111 tests across backend (50) and frontend (61):
+128 tests across backend (67) and frontend (61):
 
 ### Backend (pytest)
 
@@ -277,6 +294,7 @@ The pipeline is infrastructure-agnostic. Swapping Redis or Supabase requires cha
 | `test_redis_services.py` | Run state, cancellation, rate limiting, concurrency |
 | `test_streaming.py` | SSE formatting, node events, stream lifecycle, cancellation, BYOK key resolution |
 | `test_endpoints.py` | All HTTP endpoints — validation, auth, rate limits, CRUD |
+| `test_source_eval.py` | Domain extraction, subdomain matching, per-domain trusted source evaluation, .edu TLD matching |
 
 Tests use a `FakeRedis` in-memory implementation and mock the LangGraph pipeline, so the suite runs in ~1 second with no external dependencies.
 
@@ -295,7 +313,7 @@ Tests use a `FakeRedis` in-memory implementation and mock the LangGraph pipeline
 | Layer | Tool | What it tracks |
 |-------|------|---------------|
 | **LLM traces** | LangSmith | Full LangGraph execution traces, token usage, latency per node |
-| **Eval quality** | Built-in `/evals` dashboard | Quality/relevance/groundedness scores over time, regression detection |
+| **Eval quality** | Built-in `/evals` dashboard | Quality/relevance/groundedness scores, evidence strength, source trustworthiness ratio, regression detection |
 | **API errors** | FastAPI → SSE `error` events | Pipeline errors streamed to frontend in real-time |
 | **Infrastructure** | Supabase + Upstash dashboards | Database size, Redis command count |
 
@@ -666,6 +684,7 @@ CREATE TABLE runs (
     total_tokens INTEGER,
     estimated_cost_usd FLOAT,
     evidence_strength TEXT,
+    source_eval JSONB,
     node_timings JSONB DEFAULT '{}',
     token_counts JSONB DEFAULT '{}'
 );
