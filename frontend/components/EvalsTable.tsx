@@ -80,6 +80,7 @@ export default function EvalsTable({ runs }: EvalsTableProps) {
               <th className={thRightClass}>Relevance</th>
               <th className={thRightClass}>Grounded</th>
               <th className={thRightClass}>Evidence</th>
+              <th className={thRightClass}>Sources</th>
               <th className={thRightClass}>Tokens</th>
               <th className={thRightClass}>Cost</th>
               <th className={thRightClass}>Latency</th>
@@ -113,6 +114,15 @@ export default function EvalsTable({ runs }: EvalsTableProps) {
                         }`}>{run.evidence_strength}</span>
                       )}
                     </td>
+                    <td className="px-3 py-3 text-right">
+                      {run.source_eval && run.source_eval.total_sources > 0 && (
+                        <span className={`text-[10px] font-(family-name:--font-dm-mono) font-medium ${
+                          run.source_eval.trusted_ratio >= 0.8 ? 'text-accent-emerald' :
+                          run.source_eval.trusted_ratio >= 0.5 ? 'text-accent-amber' :
+                          'text-red-400'
+                        }`}>{run.source_eval.trusted_sources}/{run.source_eval.total_sources}</span>
+                      )}
+                    </td>
                     <td className="px-3 py-3 text-right font-(family-name:--font-dm-mono) text-xs text-text-secondary">{run.total_tokens?.toLocaleString()}</td>
                     <td className="px-3 py-3 text-right font-(family-name:--font-dm-mono) text-xs text-text-secondary">${run.estimated_cost_usd?.toFixed(4)}</td>
                     <td className="px-3 py-3 text-right font-(family-name:--font-dm-mono) text-xs text-text-secondary">{((run.latency_ms ?? 0) / 1000).toFixed(1)}s</td>
@@ -129,7 +139,7 @@ export default function EvalsTable({ runs }: EvalsTableProps) {
                   <AnimatePresence>
                     {isExpanded && Object.keys(timings).length > 0 && (
                       <tr>
-                        <td colSpan={10}>
+                        <td colSpan={11}>
                           <motion.div
                             className="px-5 py-3 bg-bg-elevated/30"
                             initial={{ height: 0, opacity: 0 }}
@@ -200,6 +210,15 @@ export default function EvalsTable({ runs }: EvalsTableProps) {
                         'bg-red-500/10 text-red-400'
                       }`}>
                         {viewingRun.evidence_strength} evidence
+                      </span>
+                    )}
+                    {viewingRun.source_eval && viewingRun.source_eval.total_sources > 0 && (
+                      <span className={`text-[10px] font-(family-name:--font-dm-mono) font-medium px-1.5 py-0.5 rounded ${
+                        viewingRun.source_eval.trusted_ratio >= 0.8 ? 'bg-accent-emerald/10 text-accent-emerald' :
+                        viewingRun.source_eval.trusted_ratio >= 0.5 ? 'bg-accent-amber/10 text-accent-amber' :
+                        'bg-red-500/10 text-red-400'
+                      }`}>
+                        {viewingRun.source_eval.trusted_sources}/{viewingRun.source_eval.total_sources} trusted
                       </span>
                     )}
                   </div>

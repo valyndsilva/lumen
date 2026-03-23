@@ -20,11 +20,21 @@ export interface TraceNode {
 export const EvidenceStrengthSchema = z.enum(['high', 'medium', 'low'])
 export type EvidenceStrength = z.infer<typeof EvidenceStrengthSchema>
 
+export const SourceEvalSchema = z.object({
+  total_sources: z.number(),
+  trusted_sources: z.number(),
+  trusted_ratio: z.number(),
+  trusted_domains_found: z.array(z.string()),
+  untrusted_urls: z.array(z.string()),
+}).optional()
+export type SourceEval = z.infer<typeof SourceEvalSchema>
+
 export const EvalScoresSchema = z.object({
   quality: z.number().min(0).max(5),
   relevance: z.number().min(0).max(5),
   groundedness: z.number().min(0).max(5),
   evidence_strength: EvidenceStrengthSchema.optional().default('medium'),
+  source_eval: SourceEvalSchema,
 })
 export type EvalScores = z.infer<typeof EvalScoresSchema>
 
@@ -59,6 +69,7 @@ export const EvalRunSchema = z.object({
   relevance: flexNum,
   groundedness: flexNum,
   evidence_strength: z.string().nullable().optional(),
+  source_eval: SourceEvalSchema.nullable().optional(),
   latency_ms: flexNum,
   total_tokens: flexNum,
   estimated_cost_usd: flexNum,

@@ -55,6 +55,17 @@ export default function DraftOutput({ draft, sources, scores, onRefine, isRefini
                   <span className="text-[10px] font-medium font-(family-name:--font-dm-mono) capitalize">{scores.evidence_strength} Evidence</span>
                 </div>
               )}
+              {scores.source_eval && scores.source_eval.total_sources > 0 && (
+                <div className={`flex items-center gap-1.5 px-2 py-1 rounded-md border ${
+                  scores.source_eval.trusted_ratio >= 0.8 ? 'bg-accent-emerald/10 border-accent-emerald/30 text-accent-emerald' :
+                  scores.source_eval.trusted_ratio >= 0.5 ? 'bg-accent-amber/10 border-accent-amber/30 text-accent-amber' :
+                  'bg-red-500/10 border-red-500/30 text-red-400'
+                }`}>
+                  <span className="text-[10px] font-medium font-(family-name:--font-dm-mono)">
+                    {scores.source_eval.trusted_sources}/{scores.source_eval.total_sources} Trusted Sources
+                  </span>
+                </div>
+              )}
             </>
           )}
         </div>

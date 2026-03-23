@@ -234,6 +234,7 @@ export interface SavedRun {
   relevance: number | null
   groundedness: number | null
   evidence_strength: string | null
+  source_eval: { total_sources: number; trusted_sources: number; trusted_ratio: number; trusted_domains_found: string[]; untrusted_urls: string[] } | null
   latency_ms: number | null
   total_tokens: number | null
   estimated_cost_usd: number | null
@@ -256,6 +257,7 @@ export async function fetchRun(runId: string): Promise<SavedRun> {
     relevance: toNum(data.relevance),
     groundedness: toNum(data.groundedness),
     evidence_strength: data.evidence_strength ?? null,
+    source_eval: data.source_eval ?? null,
     latency_ms: toNum(data.latency_ms),
     total_tokens: toNum(data.total_tokens),
     estimated_cost_usd: toNum(data.estimated_cost_usd),
