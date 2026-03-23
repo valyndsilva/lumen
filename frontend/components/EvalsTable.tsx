@@ -79,6 +79,7 @@ export default function EvalsTable({ runs }: EvalsTableProps) {
               <th className={thRightClass}>Quality</th>
               <th className={thRightClass}>Relevance</th>
               <th className={thRightClass}>Grounded</th>
+              <th className={thRightClass}>Evidence</th>
               <th className={thRightClass}>Tokens</th>
               <th className={thRightClass}>Cost</th>
               <th className={thRightClass}>Latency</th>
@@ -103,6 +104,15 @@ export default function EvalsTable({ runs }: EvalsTableProps) {
                     <td className="px-3 py-3 text-right font-(family-name:--font-dm-mono) text-xs text-accent-emerald">{run.quality?.toFixed(1)}</td>
                     <td className="px-3 py-3 text-right font-(family-name:--font-dm-mono) text-xs text-accent-amber">{run.relevance?.toFixed(1)}</td>
                     <td className="px-3 py-3 text-right font-(family-name:--font-dm-mono) text-xs text-accent-blue">{run.groundedness?.toFixed(1)}</td>
+                    <td className="px-3 py-3 text-right">
+                      {run.evidence_strength && (
+                        <span className={`text-[10px] font-(family-name:--font-dm-mono) font-medium capitalize ${
+                          run.evidence_strength === 'high' ? 'text-accent-emerald' :
+                          run.evidence_strength === 'medium' ? 'text-accent-amber' :
+                          'text-red-400'
+                        }`}>{run.evidence_strength}</span>
+                      )}
+                    </td>
                     <td className="px-3 py-3 text-right font-(family-name:--font-dm-mono) text-xs text-text-secondary">{run.total_tokens?.toLocaleString()}</td>
                     <td className="px-3 py-3 text-right font-(family-name:--font-dm-mono) text-xs text-text-secondary">${run.estimated_cost_usd?.toFixed(4)}</td>
                     <td className="px-3 py-3 text-right font-(family-name:--font-dm-mono) text-xs text-text-secondary">{((run.latency_ms ?? 0) / 1000).toFixed(1)}s</td>
@@ -119,7 +129,7 @@ export default function EvalsTable({ runs }: EvalsTableProps) {
                   <AnimatePresence>
                     {isExpanded && Object.keys(timings).length > 0 && (
                       <tr>
-                        <td colSpan={9}>
+                        <td colSpan={10}>
                           <motion.div
                             className="px-5 py-3 bg-bg-elevated/30"
                             initial={{ height: 0, opacity: 0 }}
@@ -181,6 +191,15 @@ export default function EvalsTable({ runs }: EvalsTableProps) {
                     {viewingRun.groundedness != null && (
                       <span className="text-[10px] font-(family-name:--font-dm-mono) text-accent-blue">
                         G {viewingRun.groundedness.toFixed(1)}
+                      </span>
+                    )}
+                    {viewingRun.evidence_strength && (
+                      <span className={`text-[10px] font-(family-name:--font-dm-mono) font-medium px-1.5 py-0.5 rounded ${
+                        viewingRun.evidence_strength === 'high' ? 'bg-accent-emerald/10 text-accent-emerald' :
+                        viewingRun.evidence_strength === 'medium' ? 'bg-accent-amber/10 text-accent-amber' :
+                        'bg-red-500/10 text-red-400'
+                      }`}>
+                        {viewingRun.evidence_strength} evidence
                       </span>
                     )}
                   </div>

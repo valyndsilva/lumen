@@ -233,6 +233,7 @@ export interface SavedRun {
   quality: number | null
   relevance: number | null
   groundedness: number | null
+  evidence_strength: string | null
   latency_ms: number | null
   total_tokens: number | null
   estimated_cost_usd: number | null
@@ -254,6 +255,7 @@ export async function fetchRun(runId: string): Promise<SavedRun> {
     quality: toNum(data.quality),
     relevance: toNum(data.relevance),
     groundedness: toNum(data.groundedness),
+    evidence_strength: data.evidence_strength ?? null,
     latency_ms: toNum(data.latency_ms),
     total_tokens: toNum(data.total_tokens),
     estimated_cost_usd: toNum(data.estimated_cost_usd),
