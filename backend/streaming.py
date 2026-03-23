@@ -6,6 +6,7 @@ from agent.graph import lumen_graph
 from agent.nodes import MAX_REFLECTION_ITERATIONS, PipelineCancelled
 from auth.keys import get_user_key_async
 from evals.judge import score_draft_async
+from evals.source_eval import evaluate_sources
 from evals.store import save_run
 from redis_services import (
     store_run_state,
@@ -104,6 +105,8 @@ async def _stream_pipeline(state: dict, run_id: str, user_id: str):
         sources = [r["url"] for r in state.get("search_results", [])]
         byok_key = state.get("_byok_anthropic_key")
         scores = await score_draft_async(state["topic"], state.get("draft", ""), sources, api_key=byok_key)
+        source_eval = evaluate_sources(sources, state.get("domain", "general"))
+        scores["source_eval"] = source_eval
         await save_run(
             run_id, user_id, state["topic"], state.get("draft", ""), sources,
             scores, state.get("node_timings", {}), state.get("token_counts", {}),

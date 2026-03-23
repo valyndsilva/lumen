@@ -43,6 +43,7 @@ async def save_run(run_id: str, user_id: str, topic: str, draft: str,
         "relevance": scores.get("relevance"),
         "groundedness": scores.get("groundedness"),
         "evidence_strength": scores.get("evidence_strength"),
+        "source_eval": scores.get("source_eval"),
         "latency_ms": total_latency,
         "total_tokens": total_tokens,
         "estimated_cost_usd": round(cost, 6),
@@ -56,7 +57,7 @@ async def save_run(run_id: str, user_id: str, topic: str, draft: str,
 async def get_all_runs(user_id: str) -> list[dict]:
     result = (_get_client()
               .table("runs")
-              .select("id, user_id, topic, created_at, quality, relevance, groundedness, evidence_strength, latency_ms, total_tokens, estimated_cost_usd, node_timings, token_counts")
+              .select("id, user_id, topic, created_at, quality, relevance, groundedness, evidence_strength, source_eval, latency_ms, total_tokens, estimated_cost_usd, node_timings, token_counts")
               .eq("user_id", user_id)
               .order("created_at", desc=True)
               .limit(50)
