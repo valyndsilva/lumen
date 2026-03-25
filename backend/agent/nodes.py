@@ -238,18 +238,39 @@ def _domain_search(query: str, provider: str, max_results: int = 2) -> dict:
 def searcher_node(state: AgentState) -> dict:
     _check_cancelled(state)
 
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     _, _, tavily_client = _get_clients(state)
     domain = _get_domain(state)
     existing_urls = {r["url"] for r in state.get("search_results", [])}
-    results = []
-    for query in state["search_queries"]:
+
+    def _search_one(query: str) -> list[dict]:
+        """Execute a single search query. Runs in parallel."""
         if _is_byok(state) and domain.search_provider == "tavily":
-            raw = tavily_client.search(query=query, max_results=2)
+            return tavily_client.search(query=query, max_results=2).get("results", [])
         elif domain.search_provider != "tavily":
-            raw = _domain_search(query, domain.search_provider, max_results=2)
+            return _domain_search(query, domain.search_provider, max_results=2).get("results", [])
         else:
-            raw = _cached_search(query, max_results=2)
-        for r in raw.get("results", []):
+            return _cached_search(query, max_results=2).get("results", [])
+
+    # Run all queries concurrently — I/O-bound HTTP calls benefit from parallelism
+    query_results: list[tuple[str, list[dict]]] = []
+    with ThreadPoolExecutor(max_workers=min(len(state["search_queries"]), 5)) as executor:
+        futures = {executor.submit(_search_one, q): q for q in state["search_queries"]}
+        for future in as_completed(futures):
+            query = futures[future]
+            try:
+                query_results.append((query, future.result()))
+            except Exception:
+                query_results.append((query, []))
+
+    # Deduplicate results — order by query submission order
+    query_order = {q: i for i, q in enumerate(state["search_queries"])}
+    query_results.sort(key=lambda x: query_order.get(x[0], 0))
+
+    results = []
+    for query, raw_results in query_results:
+        for r in raw_results:
             url = r.get("url", "")
             if url and url not in existing_urls:
                 existing_urls.add(url)

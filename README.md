@@ -201,7 +201,8 @@ LLM responses are cached in two tiers. The local LRU (100 entries, per-process) 
 
 The cache is designed for development and shared-key scenarios — BYOK users bypass LLM caching entirely since each user's API key produces different billing context. For non-BYOK usage (server key), a fresh topic uses ~12 Redis commands (6 GET misses + 6 SET writes) and a repeated topic from the same server uses 0 — everything served from L1. The tradeoff: L1 is lost on restart, but that's by design — Redis is the durable layer, L1 is a hot-path optimiser.
 
-Additional cost controls in the pipeline:
+Additional cost and latency controls in the pipeline:
+- Parallel search queries — `ThreadPoolExecutor` dispatches all queries concurrently, reducing searcher wall time from sequential (3-15s) to the slowest single query (~2-3s)
 - Batched summariser (1 LLM call for all sources per iteration, not 1 per source)
 - Source deduplication in the searcher — no duplicate URLs across loops
 - Only summarise new sources on loops — skip URLs already processed
