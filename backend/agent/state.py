@@ -34,4 +34,6 @@ class AgentState(TypedDict):
     eval_scores: Optional[EvalScores]
     run_id: str
     _byok_anthropic_key: Optional[str]  # BYOK key — passed through state, stripped before persistence
-    _skip_reflection_loop: Optional[bool]  # When True, reflection auto-accepts (used by Dig Deeper)
+    _skip_reflection_loop: Optional[bool]  # When True, reflection auto-accepts (used by single-pass refine)
+    _user_instructions: Optional[str]  # Directed refinement — user's own critique replaces LLM reflection
+    _user_id: Optional[str]  # Authenticated user — used by documents provider for scoped vector search

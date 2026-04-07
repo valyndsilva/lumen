@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 llm_fast = ChatAnthropic(model="claude-haiku-4-5-20251001", max_tokens=1000)
-llm_heavy = ChatAnthropic(model="claude-sonnet-4-6", max_tokens=2000)
+llm_heavy = ChatAnthropic(model="claude-sonnet-4-6", max_tokens=4096)
 tavily = TavilyClient(api_key=os.environ.get("TAVILY_API_KEY", ""))
 
 
@@ -39,7 +39,7 @@ def _get_clients(state: AgentState) -> tuple:
                 _byok_client_cache.pop(next(iter(_byok_client_cache)))
             _byok_client_cache[byok_anthropic] = (
                 ChatAnthropic(model="claude-haiku-4-5-20251001", max_tokens=1000, api_key=byok_anthropic),
-                ChatAnthropic(model="claude-sonnet-4-6", max_tokens=2000, api_key=byok_anthropic),
+                ChatAnthropic(model="claude-sonnet-4-6", max_tokens=4096, api_key=byok_anthropic),
             )
         fast, heavy = _byok_client_cache[byok_anthropic]
         return fast, heavy, tavily
@@ -246,7 +246,11 @@ def searcher_node(state: AgentState) -> dict:
 
     def _search_one(query: str) -> list[dict]:
         """Execute a single search query. Runs in parallel."""
-        if _is_byok(state) and domain.search_provider == "tavily":
+        if domain.search_provider == "documents":
+            from documents.search import search_documents
+            user_id = state.get("_user_id", "")
+            return search_documents(query, user_id, max_results=5).get("results", [])
+        elif _is_byok(state) and domain.search_provider == "tavily":
             return tavily_client.search(query=query, max_results=2).get("results", [])
         elif domain.search_provider != "tavily":
             return _domain_search(query, domain.search_provider, max_results=2).get("results", [])
@@ -415,9 +419,27 @@ def reflection_node(state: AgentState) -> dict:
     _check_cancelled(state)
 
     start = time.time()
+    iteration = state.get("iteration", 0)
+    user_instructions = state.get("_user_instructions")
+
+    # Directed refinement: user's instructions replace LLM reflection entirely
+    if user_instructions and iteration == 0:
+        critique = user_instructions
+        action = "revise"
+        timing = {"node_timings": {**state.get("node_timings", {}), "reflection": int((time.time() - start) * 1000)}}
+        # Clear instructions after use — subsequent reflection (iteration 1+) auto-accepts via _skip_reflection_loop
+        return {
+            "reflection": critique,
+            "reflections": [critique],
+            "reflection_action": action,
+            "should_continue": True,
+            "iteration": iteration + 1,
+            "search_queries": state.get("search_queries", []),
+            **timing,
+        }
+
     fast, _, _ = _get_clients(state)
     domain = _get_domain(state)
-    iteration = state.get("iteration", 0)
     domain_ctx = f"\n{domain.reflection_rules}" if domain.reflection_rules else ""
     prompt = REFLECTION_PROMPT.format(
         topic=state["topic"],
@@ -440,6 +462,15 @@ def reflection_node(state: AgentState) -> dict:
         action = "accept"
     if state.get("_skip_reflection_loop"):
         action = "accept"
+    # Documents domain: accept on first pass — sources are finite, no external verification
+    if state.get("domain") == "documents":
+        action = "accept"
+    # If last action was "research" but searcher found nothing new, don't loop again
+    if action == "research" and state.get("reflection_action") == "research":
+        last_results = state.get("search_results", [])
+        last_summarised = state.get("summarised_urls", [])
+        if len(last_results) > 0 and len(last_results) == len(set(last_summarised)):
+            action = "accept"
 
     return {
         "reflection": critique,

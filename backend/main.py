@@ -4,7 +4,7 @@ import re
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 load_dotenv()
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
@@ -61,6 +61,19 @@ class ResearchRequest(BaseModel):
 
 class RefineRequest(BaseModel):
     anthropic_api_key: str | None = None
+    instructions: str | None = None
+
+    @field_validator("instructions")
+    @classmethod
+    def validate_instructions(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        v = v.strip()
+        if not v:
+            return None
+        if len(v) > 1000:
+            raise ValueError("Instructions must be at most 1000 characters")
+        return v
 
     @property
     def is_byok(self) -> bool:
@@ -162,7 +175,11 @@ async def refine(run_id: str, req: RefineRequest, user_id: str = Depends(get_use
 
     async def stream_with_release():
         try:
-            async for chunk in stream_refine(run_id, user_id, byok_keys=_byok_keys(req.anthropic_api_key)):
+            async for chunk in stream_refine(
+                run_id, user_id,
+                byok_keys=_byok_keys(req.anthropic_api_key),
+                instructions=req.instructions,
+            ):
                 yield chunk
         finally:
             release_concurrency(user_id)
@@ -223,3 +240,76 @@ async def remove_keys(user_id: str = Depends(get_user_id)):
 @app.get("/api/evals")
 async def get_evals(user_id: str = Depends(get_user_id)):
     return await get_all_runs(user_id)
+
+
+# --- Document management (My Documents domain) ---
+
+MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
+MAX_DOCUMENTS_PER_USER = 20
+
+
+@app.post("/api/documents")
+async def upload_document(file: UploadFile = File(...), user_id: str = Depends(get_user_id)):
+    """Upload a PDF, extract text, chunk, embed, and store in pgvector."""
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+
+    # Check document limit
+    from documents.store import list_documents, save_document, save_chunks
+    existing = list_documents(user_id)
+    if len(existing) >= MAX_DOCUMENTS_PER_USER:
+        raise HTTPException(status_code=400, detail=f"Maximum {MAX_DOCUMENTS_PER_USER} documents allowed")
+
+    # Read file
+    pdf_bytes = await file.read()
+    if len(pdf_bytes) > MAX_UPLOAD_SIZE:
+        raise HTTPException(status_code=400, detail="File must be under 10 MB")
+    if len(pdf_bytes) == 0:
+        raise HTTPException(status_code=400, detail="File is empty")
+
+    # Extract text
+    from documents.processor import extract_text, chunk_text
+    try:
+        text, page_count = extract_text(pdf_bytes)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Could not extract text from PDF")
+
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="PDF contains no extractable text")
+
+    # Chunk
+    chunks = chunk_text(text)
+    if not chunks:
+        raise HTTPException(status_code=400, detail="PDF contains no usable content")
+
+    # Embed
+    from documents.embeddings import embed_texts
+    embeddings = embed_texts(chunks)
+
+    # Store
+    doc_id = save_document(user_id, file.filename, page_count)
+    chunk_count = save_chunks(doc_id, user_id, chunks, embeddings)
+
+    return {
+        "id": doc_id,
+        "filename": file.filename,
+        "page_count": page_count,
+        "chunk_count": chunk_count,
+    }
+
+
+@app.get("/api/documents")
+async def get_documents(user_id: str = Depends(get_user_id)):
+    """List the user's uploaded documents."""
+    from documents.store import list_documents
+    return list_documents(user_id)
+
+
+@app.delete("/api/documents/{document_id}")
+async def remove_document(document_id: str, user_id: str = Depends(get_user_id)):
+    """Delete a document and all its chunks (cascades via FK)."""
+    from documents.store import delete_document
+    deleted = delete_document(document_id, user_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return {"status": "deleted"}

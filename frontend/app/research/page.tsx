@@ -7,6 +7,7 @@ import TracePanel from '@/components/TracePanel'
 import DraftOutput from '@/components/DraftOutput'
 import ActivityFeed from '@/components/ActivityFeed'
 import ApiKeyModal from '@/components/ApiKeyModal'
+import DocumentUpload from '@/components/DocumentUpload'
 import { streamResearch, streamRefine, cancelResearch, fetchDomains, checkKeys, saveKey, RateLimitExceededError } from '@/lib/api'
 import type { ApiKeys, Domain } from '@/lib/api'
 import type { TraceStep, NodeName, RunResult, ReflectionAction } from '@/lib/types'
@@ -307,8 +308,11 @@ export default function Home() {
   const stepsRef = useRef(steps)
   stepsRef.current = steps
 
-  const handleRefine = useCallback(async (keys?: ApiKeys | null) => {
+  const handleRefine = useCallback(async (instructionsOrKeys?: string | ApiKeys | null) => {
     if (!result?.run_id) return
+    // Disambiguate: string = instructions from UI, object = keys from BYOK retry
+    const instructions = typeof instructionsOrKeys === 'string' ? instructionsOrKeys : undefined
+    const keys = typeof instructionsOrKeys === 'object' && instructionsOrKeys ? instructionsOrKeys : undefined
     const effectiveKeys = keys ?? apiKeys ?? undefined
     setIsRefining(true)
     setIsEvaluating(false)
@@ -329,8 +333,8 @@ export default function Home() {
         type: 'reflection_decision',
         status: 'complete',
         iteration: maxIteration,
-        reflectionAction: 'research',
-        critique: 'Dig Deeper — additional research pass',
+        reflectionAction: instructions ? 'revise' : 'research',
+        critique: instructions ? `User refinement: ${instructions}` : 'Dig Deeper — additional research pass',
       })
       for (const name of INITIAL_PASS_NODES) {
         updated.push({
@@ -348,7 +352,7 @@ export default function Home() {
     abortControllerRef.current = controller
 
     try {
-      for await (const event of streamRefine(result.run_id, effectiveKeys, controller.signal)) {
+      for await (const event of streamRefine(result.run_id, effectiveKeys, controller.signal, instructions)) {
         if (event.type === 'start') {
           activeRunId.current = event.run_id
         } else if (event.type === 'node_complete') {
@@ -482,6 +486,9 @@ export default function Home() {
           selectedDomain={selectedDomain}
           onDomainChange={setSelectedDomain}
         />
+        {selectedDomain === 'documents' && (
+          <DocumentUpload isRunning={isRunning || isRefining} />
+        )}
       </div>
 
       {/* Pipeline stepper */}

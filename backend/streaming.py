@@ -22,8 +22,8 @@ def _sse(event: str, data: dict) -> str:
 
 
 def _strip_secrets(state: dict) -> dict:
-    """Remove BYOK keys before persisting state."""
-    return {k: v for k, v in state.items() if not k.startswith("_byok_")}
+    """Remove transient/sensitive fields before persisting state."""
+    return {k: v for k, v in state.items() if not k.startswith("_")}
 
 
 def _build_node_event(
@@ -182,6 +182,7 @@ async def stream_research(
         "token_counts": {},
         "eval_scores": None,
         "run_id": run_id,
+        "_user_id": user_id,
     }
     await _resolve_byok(state, user_id, byok_keys)
     async for chunk in _stream_pipeline(state, run_id, user_id):
@@ -192,8 +193,14 @@ async def stream_refine(
     run_id: str,
     user_id: str,
     byok_keys: dict | None = None,
+    instructions: str | None = None,
 ):
-    """Stream one additional iteration on an existing research run."""
+    """Stream one additional iteration on an existing research run.
+
+    If instructions are provided, the reflection node uses them as critique
+    and routes to 'revise' — the drafter revises based on the user's words.
+    Without instructions, behaves as before (generic Dig Deeper).
+    """
     state = get_run_state(run_id)
     if not state:
         yield _sse("error", {"code": "database", "detail": "Run not found or expired"})
@@ -201,7 +208,12 @@ async def stream_refine(
 
     state["should_continue"] = False
     state["iteration"] = 0
-    state["_skip_reflection_loop"] = True  # Forces reflection to accept immediately — single pass
+    state["_skip_reflection_loop"] = True  # After directed revision, auto-accept on next reflection
+    state["_user_id"] = user_id  # Re-inject — stripped before persistence
+
+    if instructions:
+        state["_user_instructions"] = instructions
+
     await _resolve_byok(state, user_id, byok_keys)
     async for chunk in _stream_pipeline(state, run_id, user_id):
         yield chunk

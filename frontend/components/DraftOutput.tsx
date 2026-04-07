@@ -8,7 +8,7 @@ interface DraftOutputProps {
   draft: string
   sources: string[]
   scores?: EvalScores
-  onRefine?: () => void
+  onRefine?: (instructions?: string) => void
   isRefining?: boolean
   refineExpired?: boolean
 }
@@ -25,6 +25,7 @@ function ScoreBadge({ label, value, color }: { label: string; value: number; col
 
 export default function DraftOutput({ draft, sources, scores, onRefine, isRefining, refineExpired }: DraftOutputProps) {
   const [copied, setCopied] = useState(false)
+  const [refineInput, setRefineInput] = useState('')
 
   const draftWithoutSources = draft.replace(/\n##\s+Sources\s*\n[\s\S]*$/, '')
 
@@ -34,6 +35,12 @@ export default function DraftOutput({ draft, sources, scores, onRefine, isRefini
     setTimeout(() => setCopied(false), 2000)
   }
 
+  const handleRefineSubmit = () => {
+    if (!onRefine || isRefining) return
+    const instructions = refineInput.trim() || undefined
+    onRefine(instructions)
+    setRefineInput('')
+  }
 
   return (
     <div className="surface h-full flex flex-col">
@@ -70,19 +77,6 @@ export default function DraftOutput({ draft, sources, scores, onRefine, isRefini
           )}
         </div>
         <div className="flex items-center gap-2">
-          {refineExpired ? (
-            <span className="text-[10px] text-text-muted font-(family-name:--font-dm-mono)">
-              Session expired
-            </span>
-          ) : onRefine && (
-            <button
-              onClick={onRefine}
-              disabled={isRefining}
-              className="text-[10px] text-accent-amber hover:text-text-primary bg-accent-amber-dim hover:bg-accent-amber/20 px-2.5 py-1 rounded-md transition-all duration-200 font-(family-name:--font-dm-mono) disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              {isRefining ? 'Refining...' : 'Dig Deeper'}
-            </button>
-          )}
           <button
             onClick={handleCopy}
             className="text-[10px] text-text-muted hover:text-text-primary bg-bg-elevated hover:bg-border-subtle px-2.5 py-1 rounded-md transition-all duration-200 font-(family-name:--font-dm-mono)"
@@ -91,6 +85,36 @@ export default function DraftOutput({ draft, sources, scores, onRefine, isRefini
           </button>
         </div>
       </div>
+
+      {/* Refinement input bar */}
+      {!refineExpired && onRefine && (
+        <div className="px-5 py-2.5 border-b border-border-subtle flex items-center gap-2">
+          <input
+            type="text"
+            value={refineInput}
+            onChange={(e) => setRefineInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleRefineSubmit() } }}
+            placeholder="Refine this article... (e.g. &quot;Expand the limitations section&quot;)"
+            disabled={isRefining}
+            maxLength={1000}
+            className="flex-1 bg-bg-elevated border border-border-subtle rounded-md px-3 py-1.5 text-xs text-text-primary placeholder:text-text-muted/50 font-(family-name:--font-dm-mono) focus:outline-none focus:border-accent-amber/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          />
+          <button
+            onClick={handleRefineSubmit}
+            disabled={isRefining}
+            className="text-[10px] text-accent-amber hover:text-text-primary bg-accent-amber-dim hover:bg-accent-amber/20 px-3 py-1.5 rounded-md transition-all duration-200 font-(family-name:--font-dm-mono) disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+          >
+            {isRefining ? 'Refining...' : refineInput.trim() ? 'Refine' : 'Dig Deeper'}
+          </button>
+        </div>
+      )}
+      {refineExpired && (
+        <div className="px-5 py-2 border-b border-border-subtle">
+          <span className="text-[10px] text-text-muted font-(family-name:--font-dm-mono)">
+            Session expired — start a new research to refine
+          </span>
+        </div>
+      )}
 
       {/* Article content */}
       <div className="flex-1 overflow-y-auto px-5 py-4">
@@ -107,21 +131,61 @@ export default function DraftOutput({ draft, sources, scores, onRefine, isRefini
               Sources
             </h3>
             <ol className="space-y-2">
-              {[...new Set(sources)].map((url, i) => (
-                <li key={i} className="flex items-start gap-2.5">
-                  <span className="font-(family-name:--font-dm-mono) text-[10px] text-text-muted mt-0.5 shrink-0 w-4 text-right">
-                    {i + 1}
-                  </span>
-                  <a
-                    href={url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs text-accent-amber hover:text-text-primary break-all transition-colors duration-200 border-b border-transparent hover:border-accent-amber font-(family-name:--font-dm-mono)"
-                  >
-                    {url}
-                  </a>
-                </li>
-              ))}
+              {(() => {
+                const unique = [...new Set(sources)]
+                const docUrls = unique.filter(u => u.startsWith('doc://'))
+                const webUrls = unique.filter(u => !u.startsWith('doc://'))
+
+                // For doc:// sources, group them into a single entry per document
+                const docGroups = new Map<string, number>()
+                for (const url of docUrls) {
+                  const docId = url.replace('doc://', '').split('#')[0]
+                  docGroups.set(docId, (docGroups.get(docId) ?? 0) + 1)
+                }
+
+                const items: React.ReactNode[] = []
+                let idx = 0
+
+                // Render grouped document sources
+                docGroups.forEach((passageCount, _docId) => {
+                  idx++
+                  items.push(
+                    <li key={`doc-${_docId}`} className="flex items-start gap-2.5">
+                      <span className="font-(family-name:--font-dm-mono) text-[10px] text-text-muted mt-0.5 shrink-0 w-4 text-right">
+                        {idx}
+                      </span>
+                      <span className="text-xs text-text-secondary font-(family-name:--font-dm-mono) flex items-center gap-1.5">
+                        <svg className="w-3 h-3 text-accent-amber shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        Your uploaded document — {passageCount} {passageCount === 1 ? 'passage' : 'passages'} referenced
+                      </span>
+                    </li>
+                  )
+                })
+
+                // Render web sources
+                for (const url of webUrls) {
+                  idx++
+                  items.push(
+                    <li key={url} className="flex items-start gap-2.5">
+                      <span className="font-(family-name:--font-dm-mono) text-[10px] text-text-muted mt-0.5 shrink-0 w-4 text-right">
+                        {idx}
+                      </span>
+                      <a
+                        href={url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-accent-amber hover:text-text-primary break-all transition-colors duration-200 border-b border-transparent hover:border-accent-amber font-(family-name:--font-dm-mono)"
+                      >
+                        {url}
+                      </a>
+                    </li>
+                  )
+                }
+
+                return items
+              })()}
             </ol>
           </div>
         )}

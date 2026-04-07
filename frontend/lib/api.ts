@@ -141,10 +141,13 @@ export async function* streamResearch(topic: string, domain: string = 'general',
   yield* parseSSEStream(res.body.getReader()).events()
 }
 
-export async function* streamRefine(runId: string, keys?: ApiKeys, signal?: AbortSignal): AsyncGenerator<SSEEvent> {
+export async function* streamRefine(runId: string, keys?: ApiKeys, signal?: AbortSignal, instructions?: string): AsyncGenerator<SSEEvent> {
   const body: Record<string, string> = {}
   if (keys) {
     body.anthropic_api_key = keys.anthropic_api_key
+  }
+  if (instructions) {
+    body.instructions = instructions
   }
 
   const auth = await authHeaders()
@@ -262,4 +265,46 @@ export async function fetchRun(runId: string): Promise<SavedRun> {
     total_tokens: toNum(data.total_tokens),
     estimated_cost_usd: toNum(data.estimated_cost_usd),
   }
+}
+
+// --- Document management (My Documents domain) ---
+
+export interface UserDocument {
+  id: string
+  filename: string
+  page_count: number
+  chunk_count: number
+  created_at: string
+}
+
+export async function uploadDocument(file: File): Promise<UserDocument> {
+  const auth = await authHeaders()
+  const form = new FormData()
+  form.append('file', file)
+  const res = await fetch(`${API_BASE}/api/documents`, {
+    method: 'POST',
+    headers: { ...auth },
+    body: form,
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail ?? `Upload failed: ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function fetchDocuments(): Promise<UserDocument[]> {
+  const auth = await authHeaders()
+  const res = await fetch(`${API_BASE}/api/documents`, { headers: auth })
+  if (!res.ok) throw new Error(`Failed to fetch documents: ${res.status}`)
+  return res.json()
+}
+
+export async function deleteDocument(documentId: string): Promise<void> {
+  const auth = await authHeaders()
+  const res = await fetch(`${API_BASE}/api/documents/${documentId}`, {
+    method: 'DELETE',
+    headers: auth,
+  })
+  if (!res.ok) throw new Error('Failed to delete document')
 }
