@@ -179,7 +179,8 @@ def search_sec_edgar(query: str, max_results: int = 2) -> dict:
     return {"results": results}
 
 
-# Provider registry
+# Provider registry — documents provider is handled separately in searcher_node
+# because it requires user_id for scoped vector search
 SEARCH_PROVIDERS = {
     "pubmed": search_pubmed,
     "courtlistener": search_courtlistener,

@@ -39,6 +39,7 @@ TRUSTED_DOMAINS: dict[str, set[str]] = {
         "bloomberg.com",
         "wsj.com",
     },
+    "documents": set(),  # User uploads — all doc:// URLs are trusted by definition
     "general": {
         # Reference & encyclopedias
         "wikipedia.org",
@@ -122,9 +123,21 @@ def evaluate_sources(urls: list[str], domain: str) -> dict:
             "untrusted_urls": ["https://random-blog.com/..."],
         }
     """
+    # Documents domain: all doc:// URLs are trusted (user's own uploads)
+    if domain == "documents":
+        doc_urls = [u for u in urls if u.startswith("doc://")]
+        web_urls = [u for u in urls if not u.startswith("doc://")]
+        return {
+            "total_sources": len(urls),
+            "trusted_sources": len(doc_urls),
+            "trusted_ratio": round(len(doc_urls) / len(urls), 2) if urls else 0.0,
+            "trusted_domains_found": ["user-documents"],
+            "untrusted_urls": web_urls,
+        }
+
     trusted_set = TRUSTED_DOMAINS.get(domain, set())
 
-    # General domain: no trusted list, return neutral result
+    # Unknown domain: no trusted list, return neutral result
     if not trusted_set:
         return {
             "total_sources": len(urls),

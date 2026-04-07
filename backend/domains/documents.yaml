@@ -1,0 +1,34 @@
+domain: documents
+label: My Documents
+search:
+  provider: documents
+
+planner:
+  context: |
+    Generate search queries to find relevant passages in the user's uploaded documents.
+    Use specific terms and phrases related to the topic — the search uses semantic similarity.
+
+summariser:
+  context: |
+    These are passages from the user's own uploaded documents.
+    Extract key facts, arguments, and data points. Note the source document name.
+
+outliner:
+  context: |
+    Structure the article around evidence found in the user's documents.
+    Each section should reference specific document passages.
+
+reflection:
+  rules: |
+    - Sources are LIMITED to the user's uploaded documents. No external sources exist.
+    - Do NOT critique missing external citations, unverifiable claims, or lack of bibliographic details — users uploaded these documents and expect analysis of what is there.
+    - Do NOT request "research" — there are no additional sources to find.
+    - Prefer "accept" unless there is a clear structural or writing quality issue (e.g. incomplete sections, incoherent flow).
+    - Only use "revise" for genuine writing problems, not for academic rigor concerns about the source material.
+
+judge:
+  criteria: |
+    Score by how well the article synthesises the user's own documents:
+    - quality: Is it well-structured and clearly written?
+    - relevance: Does it address the topic using the uploaded material?
+    - groundedness: Are claims supported by specific document passages?

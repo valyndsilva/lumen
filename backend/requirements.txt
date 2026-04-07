@@ -11,3 +11,6 @@ pyyaml==6.0.2
 supabase==2.13.0
 upstash-redis==1.4.0
 pyjwt[crypto]==2.10.1
+python-multipart==0.0.20
+pdfplumber==0.11.4
+voyageai==0.3.2
