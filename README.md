@@ -166,7 +166,7 @@ Users can upload PDFs and research their own documents. The pipeline searches th
 ### How it works
 
 ```
-Upload PDF → Extract text (pdfplumber) → Chunk (2000 chars, 200 overlap)
+Upload PDF → Extract text (pdfplumber) → Semantic chunking (headings, paragraphs, sentences)
            → Embed chunks (Voyage AI voyage-3-lite, 512 dims)
            → Store in Supabase pgvector (document_chunks table)
 
@@ -178,7 +178,7 @@ Research query → Embed query → Cosine similarity search (pgvector RPC)
 
 - **pgvector over Pinecone/Weaviate** — Already using Supabase. pgvector runs inside Postgres, no new service, free tier includes it. One fewer external dependency.
 - **Voyage AI for embeddings** — Anthropic doesn't offer an embedding model. Voyage is their recommended embedding partner. Cost is negligible (~$0.02/M tokens), paid by the server — consistent with how Tavily uses a server key.
-- **Fixed-size chunking with overlap** — Simple, predictable, easy to debug. 2000-character chunks with 200-character overlap for context continuity. Semantic chunking (splitting on section boundaries) would be better for structured documents but adds complexity.
+- **Semantic chunking** — Splits on document structure (headings, paragraph breaks, numbered sections) and merges small sections up to a 2000-character ceiling. Oversized paragraphs fall back to sentence splitting. This keeps headings with their body text and avoids splitting mid-sentence — better retrieval quality than fixed-size chunking because each chunk is a coherent unit of meaning.
 - **`doc://` URL scheme** — The pipeline expects `SearchResult` with URLs. User documents don't have web URLs. A custom scheme (`doc://document-id#chunk-id`) preserves the interface while distinguishing from web sources. The source eval recognizes `doc://` as always trusted.
 - **User-scoped search** — The pgvector RPC function filters by `user_id`. Users only search their own documents.
 - **Single-pass pipeline** — The documents domain forces reflection to accept on the first pass. Sources are finite (user's uploads), so reflection loops requesting "more research" are wasteful — there are no additional sources to find.
@@ -433,7 +433,8 @@ All infrastructure runs on free tiers. The backend scales horizontally — add m
 | YAML domain configs | No code changes to add domains | Requires server restart |
 | pgvector over Pinecone/Weaviate | No new service, runs inside existing Supabase, free tier | Less tunable than dedicated vector DBs |
 | Voyage AI for embeddings | Anthropic-recommended partner, low cost | Extra API dependency; Anthropic doesn't offer embeddings natively |
-| Fixed-size chunking (2000 chars) | Simple, predictable, easy to debug | Semantic chunking would be better for structured documents |
+| Semantic chunking (headings + paragraphs) | Respects document structure, better retrieval quality | More complex splitting logic than fixed-size |
+| Provider abstraction (env config) | Swap LLM providers without code changes | Requires provider-specific LangChain packages installed |
 | Documents domain skips reflection | Single pass — no wasted loops on a closed corpus | Misses writing quality issues the reflection could catch |
 | Directed refinement skips LLM reflection | Zero extra cost — user's words used directly as critique | No LLM validation of user instructions |
 
@@ -747,6 +748,9 @@ All endpoints require a Clerk JWT in the `Authorization: Bearer <token>` header 
 | `LUMEN_DEV_CACHE` | No | Two-tier LLM cache — L1 local + L2 Redis (default: `true`) |
 | `CORS_ORIGINS` | No | Allowed origins (default: `http://localhost:3000`) |
 | `VOYAGE_API_KEY` | Yes* | Voyage AI key for document embeddings (*only if using My Documents domain) |
+| `LLM_PROVIDER` | No | LLM provider: `anthropic` (default), `openai`, `google` |
+| `LLM_FAST_MODEL` | No | Fast model ID (default: `claude-haiku-4-5-20251001`) |
+| `LLM_HEAVY_MODEL` | No | Heavy model ID (default: `claude-sonnet-4-6`) |
 | `LANGSMITH_API_KEY` | No | LangSmith tracing key |
 | `LANGSMITH_TRACING` | No | Enable tracing (`true`/`false`) |
 
@@ -769,7 +773,7 @@ All endpoints require a Clerk JWT in the `Authorization: Bearer <token>` header 
 | Auth | Clerk (OAuth, JWT) |
 | Backend | FastAPI, Python 3.11+, Uvicorn |
 | Orchestration | LangGraph 1.1.3 |
-| LLM | Claude Sonnet 4.6 (drafter) + Haiku 4.5 (all other nodes) |
+| LLM | Claude Sonnet 4.6 (drafter) + Haiku 4.5 (all other nodes) — swappable via provider abstraction (OpenAI, Google supported) |
 | Search | Tavily, PubMed, CourtListener, SEC EDGAR |
 | RAG | pgvector (Supabase), Voyage AI (voyage-3-lite, 512 dims), pdfplumber |
 | Database | Supabase Postgres + pgvector |
@@ -777,12 +781,35 @@ All endpoints require a Clerk JWT in the `Authorization: Bearer <token>` header 
 | Key Encryption | Fernet (AES-128-CBC) |
 | Tracing | LangSmith |
 
+## LLM Provider Abstraction
+
+The pipeline is provider-agnostic. All LLM clients are created through a factory in `agent/providers.py` that reads environment config:
+
+```bash
+# Default — Anthropic (no config needed)
+LLM_PROVIDER=anthropic
+LLM_FAST_MODEL=claude-haiku-4-5-20251001
+LLM_HEAVY_MODEL=claude-sonnet-4-6
+
+# Switch to OpenAI
+LLM_PROVIDER=openai
+LLM_FAST_MODEL=gpt-4o-mini
+LLM_HEAVY_MODEL=gpt-4o
+
+# Switch to Google
+LLM_PROVIDER=google
+LLM_FAST_MODEL=gemini-2.0-flash
+LLM_HEAVY_MODEL=gemini-2.5-pro
+```
+
+All providers return a LangChain-compatible chat model with `.invoke()`, so the pipeline nodes, judge, and caching layer work identically regardless of provider. The graph, prompts, streaming, and evaluation don't change — only the client initialization differs.
+
+To add a new provider: add one `elif` branch in `create_llm()` with the corresponding `langchain-*` import. No other files change.
+
 ## What I'd Build Next
 
 - **Eval regression CI** — Automated quality checks on prompt changes. Run a fixed test set through the pipeline on every PR and fail the build if scores drop. The eval infrastructure already exists — this is wiring it into CI.
 - **Multi-agent research** — Parallel searcher subgraphs for different angles, merged before drafting. This would improve coverage on broad topics where a single search pass misses perspectives.
-- **Provider abstraction** — Swap LLM providers per node (Claude, GPT-4, Gemini, local models). The pipeline graph doesn't care which LLM backs a node — only the client initialization changes.
-- **Semantic chunking** — Replace fixed-size chunking with structure-aware splitting (section boundaries, paragraph breaks) for better retrieval quality on the documents domain. The current approach works well but doesn't respect document structure.
 - **Conversational follow-ups** — Chain multiple directed refinements into a conversation history. Currently each refinement is stateless relative to previous refinements — the drafter sees accumulated critique but the user can't reference prior turns.
 
 ## Getting Started
