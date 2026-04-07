@@ -85,10 +85,11 @@ export default function ResearchForm({
   const [topic, setTopic] = useState('')
 
   // Pick random pills from the pool — only on client to avoid hydration mismatch
-  const pool = TOPIC_POOL[selectedDomain] ?? TOPIC_POOL.general
+  const pool = TOPIC_POOL[selectedDomain] ?? []
   const [pills, setPills] = useState(pool.slice(0, PILLS_DESKTOP))
   useEffect(() => {
-    setPills(pickRandom(TOPIC_POOL[selectedDomain] ?? TOPIC_POOL.general, PILLS_DESKTOP))
+    const domainPool = TOPIC_POOL[selectedDomain] ?? []
+    setPills(domainPool.length ? pickRandom(domainPool, PILLS_DESKTOP) : [])
   }, [selectedDomain])
 
   const handleSubmit = (e: React.FormEvent) => {
