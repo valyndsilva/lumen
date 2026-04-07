@@ -122,6 +122,34 @@ body {
   margin: 2rem 0;
 }
 
+.prose-lumen table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 1.5rem;
+  font-size: 0.85rem;
+}
+
+.prose-lumen thead th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  padding: 0.5rem 0.75rem;
+  border-bottom: 2px solid var(--color-border-subtle);
+  font-size: 0.8rem;
+  letter-spacing: 0.02em;
+}
+
+.prose-lumen tbody td {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--color-border-subtle);
+  color: var(--color-text-secondary);
+  line-height: 1.6;
+}
+
+.prose-lumen tbody tr:last-child td {
+  border-bottom: none;
+}
+
 /* Glow effects */
 .glow-amber {
   box-shadow: 0 0 20px rgba(226, 164, 59, 0.15), 0 0 60px rgba(226, 164, 59, 0.05);

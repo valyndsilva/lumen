@@ -160,13 +160,17 @@ function buildEntries(steps: TraceStep[]): FeedEntry[] {
       case 'searcher': {
         const n = meta?.sources as number | undefined
         const preview = meta?.preview as { title: string; url: string }[] | undefined
+        const hasDocUrls = preview?.some(s => s.url.startsWith('doc://'))
         entries.push({
           id: step.id,
           icon: 'searcher',
           color: 'var(--color-accent-blue)',
           title: `Searcher · ${n ?? 0} ${isLoop ? 'new ' : ''}sources ${timing ? `· ${timing}` : ''}`,
-          detail: isLoop ? 'Found additional sources to fill content gaps:' : 'Retrieved sources from the web:',
-          items: preview?.map(s => ({ label: s.title, sub: s.url })),
+          detail: isLoop ? 'Found additional sources to fill content gaps:' : hasDocUrls ? 'Found matching passages in your documents:' : 'Retrieved sources from the web:',
+          items: preview?.map(s => ({
+            label: s.title,
+            sub: s.url.startsWith('doc://') ? 'Uploaded document passage' : s.url,
+          })),
           iteration: step.iteration,
         })
         break
@@ -293,11 +297,71 @@ function EntryRow({ entry }: { entry: FeedEntry }) {
   )
 }
 
+const RUNNING_MESSAGES: Record<string, string[]> = {
+  planner: ['Analyzing topic...', 'Generating search queries...', 'Planning research strategy...'],
+  searcher: ['Searching sources...', 'Querying knowledge bases...', 'Finding relevant documents...'],
+  summariser: ['Reading sources...', 'Extracting key facts...', 'Summarizing findings...'],
+  outliner: ['Structuring article...', 'Mapping sources to sections...', 'Planning outline...'],
+  drafter: ['Writing article...', 'Composing sections...', 'Drafting with citations...'],
+  reflection: ['Reviewing draft...', 'Checking coverage and accuracy...', 'Evaluating quality...'],
+}
+
+function RunningIndicator({ node }: { node: string }) {
+  const messages = RUNNING_MESSAGES[node] ?? ['Working...']
+  const [msgIdx, setMsgIdx] = useState(0)
+
+  useEffect(() => {
+    setMsgIdx(0)
+    const interval = setInterval(() => {
+      setMsgIdx(prev => (prev + 1) % messages.length)
+    }, 3000)
+    return () => clearInterval(interval)
+  }, [node, messages.length])
+
+  return (
+    <motion.div
+      className="mt-3"
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -4 }}
+      transition={{ duration: 0.2 }}
+    >
+      <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg border border-accent-amber/20 bg-accent-amber/5">
+        <div className="flex gap-1 shrink-0">
+          {[0, 1, 2].map(i => (
+            <motion.div
+              key={i}
+              className="w-1 h-1 rounded-full bg-accent-amber"
+              animate={{ opacity: [0.3, 1, 0.3] }}
+              transition={{ duration: 1.2, repeat: Infinity, delay: i * 0.2 }}
+            />
+          ))}
+        </div>
+        <AnimatePresence mode="wait">
+          <motion.span
+            key={msgIdx}
+            className="text-[11px] text-accent-amber font-(family-name:--font-dm-mono)"
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            transition={{ duration: 0.2 }}
+          >
+            {messages[msgIdx]}
+          </motion.span>
+        </AnimatePresence>
+      </div>
+    </motion.div>
+  )
+}
+
 export default function ActivityFeed({ steps, isEvaluating, error }: ActivityFeedProps) {
   const entries = buildEntries(steps)
   const groups = groupEntries(entries)
   const scrollRef = useRef<HTMLDivElement>(null)
   const totalSteps = entries.filter(e => !e.isDecision).length
+
+  // Find the currently running node
+  const runningStep = steps.find(s => s.type === 'node' && s.status === 'running')
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -393,6 +457,13 @@ export default function ActivityFeed({ steps, isEvaluating, error }: ActivityFee
               )}
             </motion.div>
           ))}
+        </AnimatePresence>
+
+        {/* Currently running node indicator */}
+        <AnimatePresence>
+          {runningStep?.node && !isEvaluating && (
+            <RunningIndicator node={runningStep.node} />
+          )}
         </AnimatePresence>
 
         {/* Evaluating indicator */}

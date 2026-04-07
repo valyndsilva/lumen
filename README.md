@@ -1,6 +1,6 @@
 # Lumen
 
-An AI research agent that searches the web, synthesises sources, and writes structured articles — with a self-improving reflection loop, real-time pipeline visibility, and LLM-as-judge evaluation.
+An AI research agent that searches the web or your own documents, synthesises sources, and writes structured articles — with a self-improving reflection loop, real-time pipeline visibility, embedding-based RAG, directed refinement, and LLM-as-judge evaluation.
 
 ## Architecture
 
@@ -8,15 +8,16 @@ An AI research agent that searches the web, synthesises sources, and writes stru
 graph TB
     subgraph Frontend["Frontend · Next.js 16 / React 19 / Tailwind v4"]
         CL[Clerk Auth] --> RF[Research Form]
+        RF --> DU[Document Upload]
         RF --> TP[Pipeline Stepper]
         TP --> AF[Activity Feed]
-        TP --> DO[Article Output]
+        TP --> DO[Article Output + Directed Refinement]
         ED[Eval Dashboard]
     end
 
     subgraph Backend["Backend · FastAPI / LangGraph"]
         subgraph Pipeline["Reflection Pattern Pipeline"]
-            P[Planner<br/><small>Haiku 4.5</small>] --> S[Searcher<br/><small>Tavily / PubMed / CourtListener / EDGAR</small>]
+            P[Planner<br/><small>Haiku 4.5</small>] --> S[Searcher<br/><small>Tavily / PubMed / CourtListener / EDGAR / pgvector</small>]
             S --> SM[Summariser<br/><small>Haiku 4.5</small>]
             SM --> OL[Outliner<br/><small>Haiku 4.5</small>]
             OL --> D[Drafter<br/><small>Sonnet 4.6</small>]
@@ -27,11 +28,13 @@ graph TB
         AUTH[Clerk JWT] -.->|verifies| Pipeline
         RL[Rate Limiter<br/><small>Upstash Redis</small>] -.->|guards| Pipeline
         R -->|accept| J[LLM Judge<br/><small>Haiku 4.5</small>]
-        J --> DB[(Supabase Postgres)]
+        J --> DB[(Supabase Postgres + pgvector)]
         KEYS[Encrypted Key Store<br/><small>Fernet + Supabase</small>] -.->|decrypts per-request| Pipeline
+        DOC[Document Processor<br/><small>pdfplumber + Voyage AI</small>] -.->|embeds & stores| DB
     end
 
     RF -->|SSE| Pipeline
+    DU -->|upload| DOC
     Pipeline -->|events| TP
     Pipeline -->|complete| DO
     DB -->|GET /api/evals| ED
@@ -48,7 +51,7 @@ The backend is stateless by design — all state lives in Upstash Redis (run sta
 | Node | Model | What it does |
 |------|-------|-------------|
 | **Planner** | Haiku 4.5 | Generates targeted search queries from the topic |
-| **Searcher** | Tavily / PubMed / CourtListener / SEC EDGAR | Domain-specific web search with URL deduplication across iterations |
+| **Searcher** | Tavily / PubMed / CourtListener / SEC EDGAR / pgvector | Domain-specific search — web APIs for public domains, semantic vector search for user documents. URL deduplication across iterations |
 | **Summariser** | Haiku 4.5 | Batches all new sources into a single LLM call, extracts key facts |
 | **Outliner** | Haiku 4.5 | Plans article structure with section headings and source assignments (first pass only) |
 | **Drafter** | Sonnet 4.6 | Writes the article following the outline; on revisions, receives prior draft + accumulated critique |
@@ -100,6 +103,7 @@ Alongside the LLM judge, a deterministic source trustworthiness eval runs on eve
 | **Legal** | Court databases, law schools | CourtListener, Cornell Law, SCOTUS, DOJ |
 | **Financial** | SEC, financial data providers | SEC EDGAR, Yahoo Finance, Reuters, Bloomberg |
 | **General** | Academic publishers, encyclopedias, major news, .edu, .gov | Wikipedia, arxiv, Nature, Reuters, BBC, AP, Stanford, NASA |
+| **Documents** | All `doc://` URLs (user's own uploads) | Always trusted by definition — the user provided the source material |
 
 The eval computes a `trusted_ratio` (trusted sources / total sources) and persists it per run. The frontend shows the ratio as a color-coded badge: green (≥80% trusted), amber (≥50%), red (<50%).
 
@@ -124,7 +128,7 @@ Only the Drafter uses Claude Sonnet 4.6. Every other node — including the judg
 
 ## Domain-Specific Research
 
-Four research domains, each with its own search provider and prompt context:
+Five research domains, each with its own search provider and prompt context:
 
 | Domain | Search Provider | Cost | What it searches |
 |--------|----------------|------|-----------------|
@@ -132,12 +136,13 @@ Four research domains, each with its own search provider and prompt context:
 | **Medical** | PubMed (NCBI) | Free | 36M+ biomedical papers, clinical trials, meta-analyses |
 | **Legal** | CourtListener | Free | US federal/state court opinions, case law |
 | **Financial** | SEC EDGAR | Free | Public company filings — 10-K, 10-Q, 8-K |
+| **My Documents** | pgvector (Supabase) | Server key (Voyage AI) | User-uploaded PDFs — semantic similarity search over embedded chunks |
 
 Each domain is a YAML config in `backend/domains/`. The config provides context appended to each node's prompt — query terminology, extraction focus, output template, and validation rules. Adding a new domain requires only a YAML file and no code changes.
 
 The key design choice here: **the agentic pattern is domain-agnostic; the context layer is domain-specific.** The pipeline graph, reflection logic, and streaming infrastructure don't change between domains. Only the prompts and search provider differ. This means you could add a "Climate Science" domain by writing a YAML file that points to a climate-focused search API and provides domain-specific prompt context — without touching the pipeline code.
 
-PubMed, CourtListener, and SEC EDGAR are free government/nonprofit APIs that require no keys. Tavily (General domain) uses the server's key.
+PubMed, CourtListener, and SEC EDGAR are free government/nonprofit APIs that require no keys. Tavily (General domain) uses the server's key. The Documents domain uses Voyage AI embeddings (server key, negligible cost) with pgvector for semantic search over user uploads.
 
 ## Handling Context Failure
 
@@ -153,6 +158,62 @@ The hardest problem in agentic systems isn't the model — it's context. An agen
 | **Judge** | Makes quality visible — a low groundedness score signals weak citations; evidence strength classification flags unreliable results |
 
 The reflection loop is the critical layer. Without it, the pipeline is a one-shot generator. With it, the system self-corrects through up to 3 iterations of targeted revision or research.
+
+## Embedding-Based RAG (My Documents)
+
+Users can upload PDFs and research their own documents. The pipeline searches them via semantic similarity instead of the web.
+
+### How it works
+
+```
+Upload PDF → Extract text (pdfplumber) → Chunk (2000 chars, 200 overlap)
+           → Embed chunks (Voyage AI voyage-3-lite, 512 dims)
+           → Store in Supabase pgvector (document_chunks table)
+
+Research query → Embed query → Cosine similarity search (pgvector RPC)
+              → Return top-k chunks as SearchResult[] → Pipeline continues as normal
+```
+
+### Design decisions
+
+- **pgvector over Pinecone/Weaviate** — Already using Supabase. pgvector runs inside Postgres, no new service, free tier includes it. One fewer external dependency.
+- **Voyage AI for embeddings** — Anthropic doesn't offer an embedding model. Voyage is their recommended embedding partner. Cost is negligible (~$0.02/M tokens), paid by the server — consistent with how Tavily uses a server key.
+- **Fixed-size chunking with overlap** — Simple, predictable, easy to debug. 2000-character chunks with 200-character overlap for context continuity. Semantic chunking (splitting on section boundaries) would be better for structured documents but adds complexity.
+- **`doc://` URL scheme** — The pipeline expects `SearchResult` with URLs. User documents don't have web URLs. A custom scheme (`doc://document-id#chunk-id`) preserves the interface while distinguishing from web sources. The source eval recognizes `doc://` as always trusted.
+- **User-scoped search** — The pgvector RPC function filters by `user_id`. Users only search their own documents.
+- **Single-pass pipeline** — The documents domain forces reflection to accept on the first pass. Sources are finite (user's uploads), so reflection loops requesting "more research" are wasteful — there are no additional sources to find.
+
+### Upload flow
+
+1. User selects "My Documents" domain → document upload area appears
+2. Click "Upload PDF" or drag-and-drop a file
+3. Backend: extract text (pdfplumber) → chunk → embed (Voyage AI) → store in pgvector
+4. Document appears as a chip showing filename and page count
+5. User enters a topic → pipeline searches their chunks via semantic similarity
+
+## Directed Refinement
+
+Replaces the generic "Dig Deeper" button with a natural language input. Users type specific instructions to steer the revision rather than getting an undirected re-run.
+
+### How it works
+
+```
+User types: "Add more detail about the security vulnerability findings"
+         → Instructions sent as POST /api/research/{id}/refine {instructions: "..."}
+         → Injected into state as _user_instructions
+         → Reflection node: skips LLM call, uses user text as critique, routes to "revise"
+         → Drafter: receives user instructions as accumulated critique, revises accordingly
+         → Next reflection: auto-accepts via _skip_reflection_loop
+```
+
+### Two modes
+
+| User action | Button label | What happens |
+|-------------|-------------|-------------|
+| Empty input, click button | "Dig Deeper" | Generic re-run — searches for more evidence, same as before |
+| Type instructions, click button | "Refine" | Directed revision — user's words become the critique, drafter revises based on their exact instructions. Zero extra LLM cost on reflection (skips the LLM call entirely) |
+
+The refinement input appears below the score badges after a research run completes. The trace UI shows "User refinement: ..." as the critique text, so the user can see exactly what the drafter was told.
 
 ## Authentication & Key Management
 
@@ -231,6 +292,8 @@ Rate limits use Redis sorted sets (sliding window) so they work across horizonta
 | **Upstash Redis down** | No rate limiting, no run state, no cache | Pipeline still runs (cache miss = direct LLM call). Rate limits fail-open. Dig Deeper won't work (no saved state) |
 | **Claude API down** | Pipeline fails at first LLM node | SSE `error` event streamed to frontend. User's key is not charged for failed calls |
 | **Domain search provider down** | That domain's search fails | SSE `error` event. Other domains unaffected — each has an independent provider |
+| **Voyage AI down** | Can't embed documents or search queries | Document upload fails gracefully. Other domains (web search) unaffected |
+| **pgvector query fails** | Documents domain search returns no results | Pipeline still runs but produces thin output. Other domains unaffected |
 
 The design principle: **fail-open on guards, fail-visible on data.** Rate limiting and caching fail silently (allow the request through). Data operations fail with a classified error — the backend categorises exceptions into error codes (`llm`, `search_provider`, `auth`, `database`, `unknown`) and the frontend maps each code to a user-friendly message with an actionable hint (e.g. "Search Provider Unavailable — try a different research domain").
 
@@ -272,16 +335,17 @@ The backend is split into focused modules with single responsibilities:
 
 | Module | Responsibility |
 |--------|---------------|
-| `main.py` | FastAPI app setup, request validation, endpoint handlers |
+| `main.py` | FastAPI app setup, request validation, endpoint handlers (research, refine, documents, keys) |
 | `auth/clerk.py` | Clerk JWT verification with cached JWKS |
 | `auth/keys.py` | Fernet encryption/decryption for user API keys |
 | `redis_services.py` | Run state, cancellation flags, rate limiting, concurrency locks |
-| `streaming.py` | SSE event formatting, pipeline orchestration |
+| `streaming.py` | SSE event formatting, pipeline orchestration, directed refinement injection |
 | `agent/` | LangGraph pipeline — nodes, graph, prompts, search providers |
+| `documents/` | PDF processing (extract, chunk), Voyage AI embeddings, pgvector storage and search |
 | `evals/` | LLM-as-judge scoring, source trustworthiness eval, and Supabase persistence |
-| `domains/` | YAML domain configs |
+| `domains/` | YAML domain configs (general, medical, legal, financial, documents) |
 
-The pipeline is infrastructure-agnostic. Swapping Redis or Supabase requires changing `redis_services.py`, `evals/store.py`, and `auth/keys.py`. The agentic layer (`agent/`, `domains/`, `streaming.py`) is untouched.
+The pipeline is infrastructure-agnostic. Swapping Redis or Supabase requires changing `redis_services.py`, `evals/store.py`, and `auth/keys.py`. The agentic layer (`agent/`, `domains/`, `streaming.py`) is untouched. The documents module (`documents/`) is fully isolated — removing it doesn't affect any other domain.
 
 ## Testing
 
@@ -325,18 +389,22 @@ All infrastructure runs on free tiers with no credit card required.
 | Component | Service | Free tier |
 |-----------|---------|-----------|
 | **Auth** | Clerk | 10K MAU |
-| **Database** | Supabase Postgres | 500MB |
+| **Database** | Supabase Postgres + pgvector | 500MB |
 | **L1 Cache** | In-memory LRU (per-process) | N/A — built-in |
 | **L2 Cache & State** | Upstash Redis | 500K cmds/month |
-| **Search** | PubMed, CourtListener, SEC EDGAR | Unlimited |
+| **Web Search** | PubMed, CourtListener, SEC EDGAR | Unlimited |
+| **Embeddings** | Voyage AI (voyage-3-lite) | 200M free tokens/month |
 | **LLM** | User's own key (BYOK) | N/A |
 
 ## Deployment
 
 ```
-Users → Vercel (Next.js) → Render (FastAPI) → Supabase + Upstash + Clerk
-                                             → Claude API (user's key)
-                                             → PubMed / CourtListener / EDGAR
+Users → Vercel (Next.js) → Render (FastAPI) → Supabase Postgres + pgvector
+                                             → Upstash Redis
+                                             → Clerk (auth)
+                                             → Claude API (user's BYOK key)
+                                             → Voyage AI (document embeddings)
+                                             → PubMed / CourtListener / EDGAR / Tavily
                                              → LangSmith (traces)
 ```
 
@@ -363,6 +431,11 @@ All infrastructure runs on free tiers. The backend scales horizontally — add m
 | Two-tier cache (L1 local + L2 Redis) | L1 eliminates Redis calls on hot paths; L2 survives restarts | L1 lost on restart (by design) |
 | Reflection loop (max 3) | Self-improving output | Up to 4x cost on worst case (3 additional loops) |
 | YAML domain configs | No code changes to add domains | Requires server restart |
+| pgvector over Pinecone/Weaviate | No new service, runs inside existing Supabase, free tier | Less tunable than dedicated vector DBs |
+| Voyage AI for embeddings | Anthropic-recommended partner, low cost | Extra API dependency; Anthropic doesn't offer embeddings natively |
+| Fixed-size chunking (2000 chars) | Simple, predictable, easy to debug | Semantic chunking would be better for structured documents |
+| Documents domain skips reflection | Single pass — no wasted loops on a closed corpus | Misses writing quality issues the reflection could catch |
+| Directed refinement skips LLM reflection | Zero extra cost — user's words used directly as critique | No LLM validation of user instructions |
 
 ## Key Workflows
 
@@ -504,7 +577,7 @@ sequenceDiagram
     Note right of FE: On page refresh/close:<br/>fetch(keepalive) fires cancel<br/>with cached auth header
 ```
 
-### 4. Refinement Flow ("Dig Deeper")
+### 4. Refinement Flow (Directed Refinement + Dig Deeper)
 
 ```mermaid
 sequenceDiagram
@@ -515,17 +588,25 @@ sequenceDiagram
     participant Graph as LangGraph
     participant DB as Supabase
 
-    User->>FE: Click "Dig Deeper"
-    FE->>API: POST /api/research/{run_id}/refine (JWT)
+    alt Directed refinement
+        User->>FE: Type "Add more about security vulnerabilities"
+        FE->>API: POST /api/research/{run_id}/refine (JWT + instructions)
+    else Generic dig deeper
+        User->>FE: Click "Dig Deeper" (empty input)
+        FE->>API: POST /api/research/{run_id}/refine (JWT, no instructions)
+    end
 
     API->>API: Verify JWT → user_id
     API->>Redis: Load run state (run:{run_id})
 
     alt State found
         API->>API: Decrypt user's key
-        API->>Graph: Single-pass pipeline (reflection auto-accepts)
 
-        Note over Graph: New sources accumulate<br/>via operator.add.<br/>Summariser skips already-processed URLs.<br/>No reflection loops — single pass only.
+        alt Has instructions (directed)
+            Note over Graph: Reflection uses user's text as critique<br/>(zero LLM cost — skips reflection call).<br/>Routes to "revise" → Drafter revises<br/>based on user's exact words.
+        else No instructions (generic)
+            Note over Graph: Full pipeline re-run.<br/>Reflection auto-accepts — single pass.
+        end
 
         Graph-->>FE: SSE events (node by node)
         API->>DB: Save updated article + new scores
@@ -533,12 +614,49 @@ sequenceDiagram
         API-->>FE: SSE complete
     else State expired (TTL 1h)
         API-->>FE: 404 Run not found
-        FE->>User: "Session expired" (Dig Deeper disabled)
+        FE->>User: "Session expired"
     end
 ```
 
+### 5. Document Upload Flow
 
-### 5. Reflection Loop (Detail)
+```mermaid
+sequenceDiagram
+    actor User
+    participant FE as Frontend
+    participant API as FastAPI
+    participant Proc as Document Processor
+    participant Voyage as Voyage AI
+    participant DB as Supabase pgvector
+
+    User->>FE: Select "My Documents" domain
+    FE->>FE: Show document upload area
+
+    User->>FE: Upload PDF (click or drag-and-drop)
+    FE->>API: POST /api/documents (multipart)
+
+    API->>API: Validate (PDF, <10MB, user under 20-doc limit)
+    API->>Proc: Extract text (pdfplumber)
+    Proc-->>API: Full text + page count
+    API->>Proc: Chunk text (2000 chars, 200 overlap)
+    Proc-->>API: Chunks[]
+
+    API->>Voyage: Embed chunks (voyage-3-lite, 512 dims)
+    Voyage-->>API: Embeddings[]
+
+    API->>DB: Insert user_documents metadata
+    API->>DB: Insert document_chunks with embeddings
+    API-->>FE: {id, filename, page_count, chunk_count}
+    FE->>User: Document chip appears in upload area
+
+    Note over User: User enters topic + clicks Research
+
+    FE->>API: POST /api/research (domain="documents")
+    Note over API: Pipeline runs normally.<br/>Searcher embeds query via Voyage AI,<br/>cosine similarity search in pgvector,<br/>returns top-k chunks as SearchResult[].<br/>Reflection auto-accepts (closed corpus).
+```
+
+
+### 6. Reflection Loop (Detail)
 
 ```mermaid
 sequenceDiagram
@@ -587,6 +705,9 @@ This shows the three distinct paths in action: `research` triggers a full re-sea
 - **Cost controls** — BYOK (zero operator LLM cost), Haiku for 5/6 nodes, batching, caching
 - **Article persistence** — Draft, sources, and scores saved per user in Supabase
 - **Domain isolation** — YAML configs, no code changes to add domains
+- **Document upload limits** — 10 MB max file size, 20 documents per user, PDF-only validation
+- **User-scoped vector search** — pgvector queries filter by `user_id`; users can only search their own documents
+- **Refinement validation** — Instructions capped at 1000 characters with whitespace normalization
 
 ## API Surface
 
@@ -597,13 +718,16 @@ All endpoints require a Clerk JWT in the `Authorization: Bearer <token>` header 
 | `GET` | `/healthz` | No | Health check |
 | `GET` | `/api/domains` | No | List available research domains |
 | `POST` | `/api/research` | Yes | Start a research pipeline (SSE stream) |
-| `POST` | `/api/research/{id}/refine` | Yes | Re-run pipeline on existing research (SSE stream) |
+| `POST` | `/api/research/{id}/refine` | Yes | Refine with optional `instructions` for directed revision (SSE stream) |
 | `POST` | `/api/research/{id}/cancel` | Yes | Cancel a running pipeline |
 | `GET` | `/api/research/{id}` | Yes | Fetch a saved article with scores |
 | `GET` | `/api/evals` | Yes | List user's last 50 eval runs |
 | `GET` | `/api/keys` | Yes | Check if user has a saved API key (preview only) |
 | `POST` | `/api/keys` | Yes | Encrypt and save user's Anthropic API key |
 | `DELETE` | `/api/keys` | Yes | Delete user's saved API key |
+| `POST` | `/api/documents` | Yes | Upload a PDF — extract, chunk, embed, store in pgvector |
+| `GET` | `/api/documents` | Yes | List user's uploaded documents |
+| `DELETE` | `/api/documents/{id}` | Yes | Delete a document and all its chunks (cascades) |
 
 ## Environment Variables
 
@@ -622,6 +746,7 @@ All endpoints require a Clerk JWT in the `Authorization: Bearer <token>` header 
 | `ANTHROPIC_API_KEY` | No | For dev testing (users provide via BYOK) |
 | `LUMEN_DEV_CACHE` | No | Two-tier LLM cache — L1 local + L2 Redis (default: `true`) |
 | `CORS_ORIGINS` | No | Allowed origins (default: `http://localhost:3000`) |
+| `VOYAGE_API_KEY` | Yes* | Voyage AI key for document embeddings (*only if using My Documents domain) |
 | `LANGSMITH_API_KEY` | No | LangSmith tracing key |
 | `LANGSMITH_TRACING` | No | Enable tracing (`true`/`false`) |
 
@@ -646,7 +771,8 @@ All endpoints require a Clerk JWT in the `Authorization: Bearer <token>` header 
 | Orchestration | LangGraph 1.1.3 |
 | LLM | Claude Sonnet 4.6 (drafter) + Haiku 4.5 (all other nodes) |
 | Search | Tavily, PubMed, CourtListener, SEC EDGAR |
-| Database | Supabase Postgres |
+| RAG | pgvector (Supabase), Voyage AI (voyage-3-lite, 512 dims), pdfplumber |
+| Database | Supabase Postgres + pgvector |
 | Cache & State | Upstash Redis |
 | Key Encryption | Fernet (AES-128-CBC) |
 | Tracing | LangSmith |
@@ -654,9 +780,10 @@ All endpoints require a Clerk JWT in the `Authorization: Bearer <token>` header 
 ## What I'd Build Next
 
 - **Eval regression CI** — Automated quality checks on prompt changes. Run a fixed test set through the pipeline on every PR and fail the build if scores drop. The eval infrastructure already exists — this is wiring it into CI.
-- **Directed refinement** — Replace "Dig Deeper" with natural language input. Feed user instructions directly into the reflection loop so users can steer the revision instead of getting a generic re-run. The reflection node already accepts a critique string — directing refinement means replacing the LLM-generated critique with the user's own words.
 - **Multi-agent research** — Parallel searcher subgraphs for different angles, merged before drafting. This would improve coverage on broad topics where a single search pass misses perspectives.
 - **Provider abstraction** — Swap LLM providers per node (Claude, GPT-4, Gemini, local models). The pipeline graph doesn't care which LLM backs a node — only the client initialization changes.
+- **Semantic chunking** — Replace fixed-size chunking with structure-aware splitting (section boundaries, paragraph breaks) for better retrieval quality on the documents domain. The current approach works well but doesn't respect document structure.
+- **Conversational follow-ups** — Chain multiple directed refinements into a conversation history. Currently each refinement is stateless relative to previous refinements — the drafter sees accumulated critique but the user can't reference prior turns.
 
 ## Getting Started
 
@@ -665,6 +792,7 @@ All endpoints require a Clerk JWT in the `Authorization: Bearer <token>` header 
 - Python 3.11+, Node.js 18+, [pnpm](https://pnpm.io/)
 - [Clerk](https://clerk.com/) account, [Supabase](https://supabase.com/) project, [Upstash](https://upstash.com/) Redis (all free tier)
 - [Anthropic API key](https://console.anthropic.com/)
+- [Voyage AI API key](https://dash.voyageai.com/) (free tier, required for My Documents domain)
 
 ### Setup
 
@@ -699,6 +827,58 @@ CREATE TABLE user_keys (
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- pgvector for My Documents domain
+CREATE EXTENSION IF NOT EXISTS vector;
+
+CREATE TABLE user_documents (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id TEXT NOT NULL,
+    filename TEXT NOT NULL,
+    storage_path TEXT NOT NULL,
+    page_count INTEGER,
+    chunk_count INTEGER DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_user_documents_user_id ON user_documents(user_id);
+
+CREATE TABLE document_chunks (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    document_id UUID NOT NULL REFERENCES user_documents(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL,
+    chunk_index INTEGER NOT NULL,
+    chunk_text TEXT NOT NULL,
+    embedding vector(512),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_document_chunks_user_id ON document_chunks(user_id);
+CREATE INDEX idx_document_chunks_embedding ON document_chunks
+    USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+
+CREATE OR REPLACE FUNCTION match_documents(
+    query_embedding vector(512),
+    match_count INT,
+    filter_user_id TEXT
+) RETURNS TABLE (
+    chunk_id UUID,
+    document_id UUID,
+    document_name TEXT,
+    chunk_text TEXT,
+    similarity FLOAT
+) LANGUAGE plpgsql AS $$
+BEGIN
+    RETURN QUERY
+    SELECT dc.id, dc.document_id, ud.filename, dc.chunk_text,
+           1 - (dc.embedding <=> query_embedding) AS similarity
+    FROM document_chunks dc
+    JOIN user_documents ud ON ud.id = dc.document_id
+    WHERE dc.user_id = filter_user_id
+    ORDER BY dc.embedding <=> query_embedding
+    LIMIT match_count;
+END;
+$$;
 ```
 
 2. **Generate encryption key:**
