@@ -55,40 +55,53 @@ def key_preview(api_key: str) -> str:
     return f"...{api_key[-4:]}" if len(api_key) > 4 else "****"
 
 
-def save_user_key(user_id: str, anthropic_key: str):
+def save_user_key(user_id: str, api_key: str, provider: str = "anthropic"):
     """Encrypt and store a user's API key. Invalidates cache."""
-    encrypted = encrypt_key(anthropic_key)
-    preview = key_preview(anthropic_key)
+    encrypted = encrypt_key(api_key)
+    preview = key_preview(api_key)
 
     _get_client().table("user_keys").upsert({
         "user_id": user_id,
         "encrypted_anthropic_key": encrypted,
         "key_preview": preview,
+        "provider": provider,
         "updated_at": "now()",
     }).execute()
 
-    # Cache the encrypted key in Redis for fast retrieval
+    # Cache the encrypted key + provider in Redis for fast retrieval
+    import json
+    cache_value = json.dumps({"encrypted": encrypted, "provider": provider})
     try:
-        _get_redis().set(f"userkey:{user_id}", encrypted, ex=KEY_CACHE_TTL)
+        _get_redis().set(f"userkey:{user_id}", cache_value, ex=KEY_CACHE_TTL)
     except Exception:
         pass
 
 
 def get_user_key(user_id: str) -> dict | None:
-    """Retrieve and decrypt a user's API key. Checks Redis cache first."""
+    """Retrieve and decrypt a user's API key. Checks Redis cache first.
+    Returns {key, preview, provider}."""
+    import json
+
     # Check Redis cache
     try:
         cached = _get_redis().get(f"userkey:{user_id}")
         if cached:
-            decrypted = decrypt_key(cached)
-            return {"key": decrypted, "preview": key_preview(decrypted)}
+            # New format: JSON with encrypted + provider
+            try:
+                data = json.loads(cached)
+                decrypted = decrypt_key(data["encrypted"])
+                return {"key": decrypted, "preview": key_preview(decrypted), "provider": data.get("provider", "anthropic")}
+            except (json.JSONDecodeError, KeyError):
+                # Legacy format: raw encrypted string
+                decrypted = decrypt_key(cached)
+                return {"key": decrypted, "preview": key_preview(decrypted), "provider": "anthropic"}
     except Exception:
         pass
 
     # Cache miss — fetch from Supabase
     result = (_get_client()
               .table("user_keys")
-              .select("encrypted_anthropic_key, key_preview")
+              .select("encrypted_anthropic_key, key_preview, provider")
               .eq("user_id", user_id)
               .limit(1)
               .execute())
@@ -97,14 +110,16 @@ def get_user_key(user_id: str) -> dict | None:
         return None
 
     row = result.data[0]
+    provider = row.get("provider", "anthropic")
     try:
         decrypted = decrypt_key(row["encrypted_anthropic_key"])
         # Cache for next time
+        cache_value = json.dumps({"encrypted": row["encrypted_anthropic_key"], "provider": provider})
         try:
-            _get_redis().set(f"userkey:{user_id}", row["encrypted_anthropic_key"], ex=KEY_CACHE_TTL)
+            _get_redis().set(f"userkey:{user_id}", cache_value, ex=KEY_CACHE_TTL)
         except Exception:
             pass
-        return {"key": decrypted, "preview": row["key_preview"]}
+        return {"key": decrypted, "preview": row["key_preview"], "provider": provider}
     except Exception:
         return None
 
@@ -116,10 +131,10 @@ async def get_user_key_async(user_id: str) -> dict | None:
 
 
 def get_user_key_preview(user_id: str) -> dict | None:
-    """Return just the preview (no decryption). For UI display."""
+    """Return just the preview and provider (no decryption). For UI display."""
     result = (_get_client()
               .table("user_keys")
-              .select("key_preview, created_at")
+              .select("key_preview, provider, created_at")
               .eq("user_id", user_id)
               .limit(1)
               .execute())
@@ -127,7 +142,9 @@ def get_user_key_preview(user_id: str) -> dict | None:
     if not result.data:
         return None
 
-    return result.data[0]
+    row = result.data[0]
+    row.setdefault("provider", "anthropic")
+    return row
 
 
 def delete_user_key(user_id: str):

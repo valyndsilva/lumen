@@ -4,25 +4,22 @@ import os
 import pickle
 import base64
 import re
-from langchain_anthropic import ChatAnthropic
 from upstash_redis import Redis
+from agent.providers import create_fast
 from agent.prompts import JUDGE_PROMPT
 
 
-_judge_client_cache: dict[str, ChatAnthropic] = {}
+_judge_client_cache: dict[str, object] = {}
 _JUDGE_CACHE_MAX = 50
 
 
-def _get_llm(api_key: str | None = None) -> ChatAnthropic:
-    """Get or create a cached judge LLM client, using BYOK key if provided."""
-    cache_key = api_key or "_default"
+def _get_llm(api_key: str | None = None, provider: str | None = None):
+    """Get or create a cached judge LLM client, using BYOK key and provider if provided."""
+    cache_key = f"{provider or 'default'}:{api_key or '_default'}"
     if cache_key not in _judge_client_cache:
         if len(_judge_client_cache) >= _JUDGE_CACHE_MAX:
             _judge_client_cache.pop(next(iter(_judge_client_cache)))
-        kwargs = {"model": "claude-haiku-4-5-20251001", "max_tokens": 300}
-        if api_key:
-            kwargs["api_key"] = api_key
-        _judge_client_cache[cache_key] = ChatAnthropic(**kwargs)
+        _judge_client_cache[cache_key] = create_fast(api_key=api_key, provider=provider)
     return _judge_client_cache[cache_key]
 
 CACHE_ENABLED = os.environ.get("LUMEN_DEV_CACHE", "true").lower() == "true"
@@ -48,7 +45,7 @@ def _parse_json(text: str):
     return json.loads(text.strip())
 
 
-def _cached_llm_invoke(prompt: str, api_key: str | None = None):
+def _cached_llm_invoke(prompt: str, api_key: str | None = None, provider: str | None = None):
     if CACHE_ENABLED:
         key_hash = hashlib.sha256(api_key.encode()).hexdigest()[:8] if api_key else "default"
         cache_key = hashlib.sha256(f"{prompt}:{key_hash}".encode()).hexdigest()[:16]
@@ -61,7 +58,7 @@ def _cached_llm_invoke(prompt: str, api_key: str | None = None):
     else:
         cache_key = None
 
-    llm = _get_llm(api_key)
+    llm = _get_llm(api_key, provider=provider)
     result = llm.invoke(prompt)
 
     if CACHE_ENABLED and cache_key:
@@ -73,17 +70,17 @@ def _cached_llm_invoke(prompt: str, api_key: str | None = None):
     return result
 
 
-def score_draft(topic: str, draft: str, sources: list[str], api_key: str | None = None) -> dict:
+def score_draft(topic: str, draft: str, sources: list[str], api_key: str | None = None, provider: str | None = None) -> dict:
     prompt = JUDGE_PROMPT.format(
         topic=topic,
         draft=draft[:4000],
         sources="\n".join(sources[:10]),
     )
-    response = _cached_llm_invoke(prompt, api_key=api_key)
+    response = _cached_llm_invoke(prompt, api_key=api_key, provider=provider)
     return _parse_json(response.content)
 
 
-async def score_draft_async(topic: str, draft: str, sources: list[str], api_key: str | None = None) -> dict:
+async def score_draft_async(topic: str, draft: str, sources: list[str], api_key: str | None = None, provider: str | None = None) -> dict:
     """Non-blocking version of score_draft for use in async streaming pipelines."""
     import asyncio
-    return await asyncio.to_thread(score_draft, topic, draft, sources, api_key)
+    return await asyncio.to_thread(score_draft, topic, draft, sources, api_key, provider)

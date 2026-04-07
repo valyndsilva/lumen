@@ -1,25 +1,40 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { motion } from 'motion/react'
-import type { ApiKeys } from '@/lib/api'
+import type { ApiKeys, LLMProvider } from '@/lib/api'
+import { fetchProviders } from '@/lib/api'
 
 interface ApiKeyModalProps {
   title?: string
   message: string
   onSubmit: (keys: ApiKeys) => void
   onDismiss?: () => void
+  initialProvider?: string
 }
 
-export default function ApiKeyModal({ title = 'Welcome to Lumen', message, onSubmit, onDismiss }: ApiKeyModalProps) {
-  const [anthropicKey, setAnthropicKey] = useState('')
+export default function ApiKeyModal({ title = 'Welcome to Lumen', message, onSubmit, onDismiss, initialProvider }: ApiKeyModalProps) {
+  const [apiKey, setApiKey] = useState('')
   const [showKey, setShowKey] = useState(false)
+  const [providers, setProviders] = useState<LLMProvider[]>([
+    { id: 'anthropic', label: 'Anthropic (Claude)', key_prefix: 'sk-ant-', key_url: 'https://console.anthropic.com/' },
+  ])
+  const [selectedProvider, setSelectedProvider] = useState(initialProvider ?? 'anthropic')
 
-  const canSubmit = anthropicKey.trim().startsWith('sk-')
+  useEffect(() => {
+    fetchProviders().then(setProviders).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    if (initialProvider) setSelectedProvider(initialProvider)
+  }, [initialProvider])
+
+  const currentProvider = providers.find(p => p.id === selectedProvider) ?? providers[0]
+  const canSubmit = apiKey.trim().length > 10
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (canSubmit) {
-      onSubmit({ anthropic_api_key: anthropicKey.trim() })
+      onSubmit({ anthropic_api_key: apiKey.trim(), provider: selectedProvider })
     }
   }
 
@@ -78,7 +93,7 @@ export default function ApiKeyModal({ title = 'Welcome to Lumen', message, onSub
                 <span className="text-[9px] font-bold text-accent-amber font-(family-name:--font-dm-mono)">1</span>
               </div>
               <p className="text-[9px] text-text-muted font-(family-name:--font-dm-mono) leading-tight">
-                Paste your API key
+                Pick a provider
               </p>
             </div>
             <div className="bg-bg-elevated rounded-lg p-2.5 border border-border-subtle text-center">
@@ -86,7 +101,7 @@ export default function ApiKeyModal({ title = 'Welcome to Lumen', message, onSub
                 <span className="text-[9px] font-bold text-accent-emerald font-(family-name:--font-dm-mono)">2</span>
               </div>
               <p className="text-[9px] text-text-muted font-(family-name:--font-dm-mono) leading-tight">
-                Research any topic
+                Paste your API key
               </p>
             </div>
             <div className="bg-bg-elevated rounded-lg p-2.5 border border-border-subtle text-center">
@@ -94,23 +109,45 @@ export default function ApiKeyModal({ title = 'Welcome to Lumen', message, onSub
                 <span className="text-[9px] font-bold text-accent-blue font-(family-name:--font-dm-mono)">3</span>
               </div>
               <p className="text-[9px] text-text-muted font-(family-name:--font-dm-mono) leading-tight">
-                Get scored articles
+                Research any topic
               </p>
             </div>
           </div>
         </div>
 
-        {/* Key input */}
+        {/* Provider selector + Key input */}
         <form onSubmit={handleSubmit} className="px-6 pb-4">
+          {/* Provider pills */}
           <label className="text-[10px] text-text-muted uppercase tracking-wider font-(family-name:--font-dm-mono) mb-1.5 block">
-            Anthropic API Key
+            LLM Provider
+          </label>
+          <div className="flex gap-1.5 mb-3">
+            {providers.map(p => (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => { setSelectedProvider(p.id); setApiKey('') }}
+                className={`flex-1 text-[10px] px-2.5 py-1.5 rounded-md border font-(family-name:--font-dm-mono) transition-all duration-200 ${
+                  selectedProvider === p.id
+                    ? 'border-accent-amber/50 bg-accent-amber/10 text-accent-amber'
+                    : 'border-border-subtle bg-bg-elevated text-text-muted hover:text-text-secondary hover:border-border-default'
+                }`}
+              >
+                {p.label.split(' ')[0]}
+              </button>
+            ))}
+          </div>
+
+          {/* Key input */}
+          <label className="text-[10px] text-text-muted uppercase tracking-wider font-(family-name:--font-dm-mono) mb-1.5 block">
+            {currentProvider.label} API Key
           </label>
           <div className="relative">
             <input
               type={showKey ? 'text' : 'password'}
-              value={anthropicKey}
-              onChange={(e) => setAnthropicKey(e.target.value)}
-              placeholder="sk-ant-api03-..."
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder={`${currentProvider.key_prefix}...`}
               autoFocus
               className="w-full h-10 bg-bg-primary border border-border-default rounded-lg pl-3 pr-10 text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent-amber/40 focus:border-accent-amber/40 font-(family-name:--font-dm-mono)"
             />
@@ -159,11 +196,11 @@ export default function ApiKeyModal({ title = 'Welcome to Lumen', message, onSub
               <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
             </svg>
             <span className="text-[9px] text-text-muted font-(family-name:--font-dm-mono)">
-              Key used per-session only — never stored
+              Encrypted at rest — decrypted per-request only
             </span>
           </div>
           <a
-            href="https://console.anthropic.com/"
+            href={currentProvider.key_url}
             target="_blank"
             rel="noopener noreferrer"
             className="text-[9px] text-text-muted hover:text-accent-amber transition-colors font-(family-name:--font-dm-mono) flex items-center gap-1"

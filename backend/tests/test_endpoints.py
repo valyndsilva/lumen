@@ -81,21 +81,28 @@ class TestKeys:
         assert res.json() == {"has_key": False}
 
     def test_check_keys_exists(self, client):
-        with patch("main.get_user_key_preview", return_value={"key_preview": "...abc1", "created_at": "2026-01-01"}):
+        with patch("main.get_user_key_preview", return_value={"key_preview": "...abc1", "provider": "anthropic", "created_at": "2026-01-01"}):
             res = client.get("/api/keys")
         data = res.json()
         assert data["has_key"] is True
         assert data["preview"] == "...abc1"
+        assert data["provider"] == "anthropic"
 
     def test_save_invalid_key(self, client):
-        res = client.post("/api/keys", json={"anthropic_api_key": "invalid-key"})
+        res = client.post("/api/keys", json={"anthropic_api_key": "short"})
         assert res.status_code == 400
 
     def test_save_valid_key(self, client):
         with patch("main.save_user_key") as mock:
             res = client.post("/api/keys", json={"anthropic_api_key": "sk-ant-test123"})
         assert res.status_code == 200
-        mock.assert_called_once_with("test-user-123", "sk-ant-test123")
+        mock.assert_called_once_with("test-user-123", "sk-ant-test123", provider="anthropic")
+
+    def test_save_key_with_provider(self, client):
+        with patch("main.save_user_key") as mock:
+            res = client.post("/api/keys", json={"anthropic_api_key": "sk-proj-test123456", "provider": "openai"})
+        assert res.status_code == 200
+        mock.assert_called_once_with("test-user-123", "sk-proj-test123456", provider="openai")
 
     def test_delete_key(self, client):
         with patch("main.delete_user_key") as mock:

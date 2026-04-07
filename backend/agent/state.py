@@ -37,3 +37,4 @@ class AgentState(TypedDict):
     _skip_reflection_loop: Optional[bool]  # When True, reflection auto-accepts (used by single-pass refine)
     _user_instructions: Optional[str]  # Directed refinement — user's own critique replaces LLM reflection
     _user_id: Optional[str]  # Authenticated user — used by documents provider for scoped vector search
+    _llm_provider: Optional[str]  # LLM provider: anthropic, openai, google — used by _get_clients()

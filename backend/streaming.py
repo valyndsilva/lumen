@@ -69,13 +69,15 @@ def _build_node_event(
 
 
 async def _resolve_byok(state: dict, user_id: str, byok_keys: dict | None) -> None:
-    """Apply BYOK keys to state in-place — from request or saved key."""
+    """Apply BYOK keys and provider to state in-place — from request or saved key."""
     if byok_keys:
         state.update(byok_keys)
-    else:
+    if not state.get("_byok_anthropic_key"):
         saved = await get_user_key_async(user_id)
         if saved:
             state["_byok_anthropic_key"] = saved["key"]
+            if not state.get("_llm_provider"):
+                state["_llm_provider"] = saved.get("provider", "anthropic")
 
 
 async def _stream_pipeline(state: dict, run_id: str, user_id: str):
@@ -104,7 +106,8 @@ async def _stream_pipeline(state: dict, run_id: str, user_id: str):
         yield _sse("eval_start", {})
         sources = [r["url"] for r in state.get("search_results", [])]
         byok_key = state.get("_byok_anthropic_key")
-        scores = await score_draft_async(state["topic"], state.get("draft", ""), sources, api_key=byok_key)
+        llm_provider = state.get("_llm_provider")
+        scores = await score_draft_async(state["topic"], state.get("draft", ""), sources, api_key=byok_key, provider=llm_provider)
         source_eval = evaluate_sources(sources, state.get("domain", "general"))
         scores["source_eval"] = source_eval
         await save_run(

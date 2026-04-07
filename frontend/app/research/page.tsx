@@ -114,6 +114,7 @@ export default function Home() {
   // BYOK (Bring Your Own Keys) state
   const [hasKey, setHasKey] = useState(false)
   const [keyPreview, setKeyPreview] = useState<string | null>(null)
+  const [keyProvider, setKeyProvider] = useState<string>('anthropic')
   const [apiKeys, setApiKeys] = useState<ApiKeys | null>(null)
   const [showKeyModal, setShowKeyModal] = useState(false)
   const [rateLimitMessage, setRateLimitMessage] = useState('')
@@ -124,9 +125,10 @@ export default function Home() {
     checkKeys().then(status => {
       setHasKey(status.has_key)
       setKeyPreview(status.preview ?? null)
+      setKeyProvider(status.provider ?? 'anthropic')
       if (!status.has_key) {
         setShowKeyModal(true)
-        setRateLimitMessage('Enter your Anthropic API key to start researching.')
+        setRateLimitMessage('Choose a provider and enter your API key to start researching.')
       }
     }).catch(() => {
       setPipelineError({ code: 'database', detail: 'Could not connect to the server. Please refresh and try again.' })
@@ -395,9 +397,10 @@ export default function Home() {
     setShowKeyModal(false)
     // Encrypt and save to server
     try {
-      await saveKey(keys.anthropic_api_key)
+      await saveKey(keys.anthropic_api_key, keys.provider ?? 'anthropic')
       setHasKey(true)
       setKeyPreview(`...${keys.anthropic_api_key.slice(-4)}`)
+      setKeyProvider(keys.provider ?? 'anthropic')
     } catch {}
     // Retry the pending action with the new keys
     const action = pendingAction.current
@@ -428,6 +431,7 @@ export default function Home() {
               pendingAction.current = null
               resetPipeline()
             } : undefined}
+            initialProvider={keyProvider}
           />
         )}
       </AnimatePresence>
@@ -460,14 +464,14 @@ export default function Home() {
           <UserButton>
             <UserButton.MenuItems>
               <UserButton.Action
-                label={hasKey ? `API Key (${keyPreview})` : 'Add API Key'}
+                label={hasKey ? `${keyProvider === 'anthropic' ? 'Claude' : keyProvider === 'openai' ? 'OpenAI' : keyProvider === 'google' ? 'Gemini' : keyProvider} (${keyPreview})` : 'Add API Key'}
                 labelIcon={
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z" />
                   </svg>
                 }
                 onClick={() => {
-                  setRateLimitMessage(hasKey ? 'Update or replace your Anthropic API key.' : 'Enter your Anthropic API key to start researching.')
+                  setRateLimitMessage(hasKey ? 'Update your API key or switch providers.' : 'Choose a provider and enter your API key to start researching.')
                   setShowKeyModal(true)
                 }}
               />

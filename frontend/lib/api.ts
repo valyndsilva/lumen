@@ -32,6 +32,7 @@ async function authHeaders(): Promise<Record<string, string>> {
 
 export interface ApiKeys {
   anthropic_api_key: string
+  provider?: string
 }
 
 export interface RateLimitError {
@@ -121,6 +122,7 @@ export async function* streamResearch(topic: string, domain: string = 'general',
   const body: Record<string, string> = { topic, domain }
   if (keys) {
     body.anthropic_api_key = keys.anthropic_api_key
+    if (keys.provider) body.llm_provider = keys.provider
   }
 
   const auth = await authHeaders()
@@ -145,6 +147,7 @@ export async function* streamRefine(runId: string, keys?: ApiKeys, signal?: Abor
   const body: Record<string, string> = {}
   if (keys) {
     body.anthropic_api_key = keys.anthropic_api_key
+    if (keys.provider) body.llm_provider = keys.provider
   }
   if (instructions) {
     body.instructions = instructions
@@ -192,7 +195,21 @@ export async function fetchDomains(): Promise<Domain[]> {
 export interface KeyStatus {
   has_key: boolean
   preview?: string
+  provider?: string
   created_at?: string
+}
+
+export interface LLMProvider {
+  id: string
+  label: string
+  key_prefix: string
+  key_url: string
+}
+
+export async function fetchProviders(): Promise<LLMProvider[]> {
+  const res = await fetch(`${API_BASE}/api/providers`)
+  if (!res.ok) return [{ id: 'anthropic', label: 'Anthropic (Claude)', key_prefix: 'sk-ant-', key_url: 'https://console.anthropic.com/' }]
+  return res.json()
 }
 
 export async function checkKeys(): Promise<KeyStatus> {
@@ -203,12 +220,12 @@ export async function checkKeys(): Promise<KeyStatus> {
   return res.json()
 }
 
-export async function saveKey(anthropicKey: string): Promise<void> {
+export async function saveKey(apiKey: string, provider: string = 'anthropic'): Promise<void> {
   const auth = await authHeaders()
   const res = await fetch(`${API_BASE}/api/keys`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...auth },
-    body: JSON.stringify({ anthropic_api_key: anthropicKey }),
+    body: JSON.stringify({ anthropic_api_key: apiKey, provider }),
   })
   if (!res.ok) throw new Error('Failed to save key')
 }

@@ -4,10 +4,10 @@ import pickle
 import base64
 import re
 import time
-from langchain_anthropic import ChatAnthropic
 from tavily import TavilyClient
 from upstash_redis import Redis
 from .state import AgentState, SearchResult
+from .providers import create_fast, create_heavy
 from .prompts import (
     PLANNER_PROMPT, SUMMARISER_PROMPT, OUTLINER_PROMPT,
     DRAFTER_PROMPT, DRAFTER_REVISION_PROMPT, REFLECTION_PROMPT
@@ -20,8 +20,8 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 
-llm_fast = ChatAnthropic(model="claude-haiku-4-5-20251001", max_tokens=1000)
-llm_heavy = ChatAnthropic(model="claude-sonnet-4-6", max_tokens=4096)
+llm_fast = create_fast()
+llm_heavy = create_heavy()
 tavily = TavilyClient(api_key=os.environ.get("TAVILY_API_KEY", ""))
 
 
@@ -30,18 +30,20 @@ _BYOK_CACHE_MAX = 50
 
 
 def _get_clients(state: AgentState) -> tuple:
-    """Return (llm_fast, llm_heavy, tavily_client) — uses BYOK Anthropic key if present.
+    """Return (llm_fast, llm_heavy, tavily_client) — uses BYOK key and provider if present.
     BYOK clients are cached per API key to avoid creating new HTTP connections on every node."""
-    byok_anthropic = state.get("_byok_anthropic_key")
-    if byok_anthropic:
-        if byok_anthropic not in _byok_client_cache:
+    byok_key = state.get("_byok_anthropic_key")
+    provider = state.get("_llm_provider")
+    if byok_key:
+        cache_key = f"{provider or 'default'}:{byok_key}"
+        if cache_key not in _byok_client_cache:
             if len(_byok_client_cache) >= _BYOK_CACHE_MAX:
                 _byok_client_cache.pop(next(iter(_byok_client_cache)))
-            _byok_client_cache[byok_anthropic] = (
-                ChatAnthropic(model="claude-haiku-4-5-20251001", max_tokens=1000, api_key=byok_anthropic),
-                ChatAnthropic(model="claude-sonnet-4-6", max_tokens=4096, api_key=byok_anthropic),
+            _byok_client_cache[cache_key] = (
+                create_fast(api_key=byok_key, provider=provider),
+                create_heavy(api_key=byok_key, provider=provider),
             )
-        fast, heavy = _byok_client_cache[byok_anthropic]
+        fast, heavy = _byok_client_cache[cache_key]
         return fast, heavy, tavily
     return llm_fast, llm_heavy, tavily
 

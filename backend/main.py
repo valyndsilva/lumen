@@ -33,6 +33,7 @@ class ResearchRequest(BaseModel):
     topic: str
     domain: str = "general"
     anthropic_api_key: str | None = None
+    llm_provider: str | None = None
 
     @field_validator("topic")
     @classmethod
@@ -62,6 +63,7 @@ class ResearchRequest(BaseModel):
 class RefineRequest(BaseModel):
     anthropic_api_key: str | None = None
     instructions: str | None = None
+    llm_provider: str | None = None
 
     @field_validator("instructions")
     @classmethod
@@ -82,6 +84,7 @@ class RefineRequest(BaseModel):
 
 class SaveKeyRequest(BaseModel):
     anthropic_api_key: str
+    provider: str = "anthropic"
 
 
 # --- App ---
@@ -131,11 +134,14 @@ def _require_concurrency(user_id: str) -> None:
         )
 
 
-def _byok_keys(api_key: str | None) -> dict:
-    """Build BYOK keys dict from an optional API key."""
+def _byok_keys(api_key: str | None, provider: str | None = None) -> dict:
+    """Build BYOK keys dict from an optional API key and provider."""
+    result = {}
     if api_key:
-        return {"_byok_anthropic_key": api_key}
-    return {}
+        result["_byok_anthropic_key"] = api_key
+    if provider:
+        result["_llm_provider"] = provider
+    return result
 
 
 # --- Endpoints ---
@@ -153,7 +159,7 @@ async def research(req: ResearchRequest, user_id: str = Depends(get_user_id)):
     async def stream_with_release():
         try:
             async for chunk in stream_research(
-                req.topic, user_id, domain=req.domain, byok_keys=_byok_keys(req.anthropic_api_key),
+                req.topic, user_id, domain=req.domain, byok_keys=_byok_keys(req.anthropic_api_key, req.llm_provider),
             ):
                 yield chunk
         finally:
@@ -177,7 +183,7 @@ async def refine(run_id: str, req: RefineRequest, user_id: str = Depends(get_use
         try:
             async for chunk in stream_refine(
                 run_id, user_id,
-                byok_keys=_byok_keys(req.anthropic_api_key),
+                byok_keys=_byok_keys(req.anthropic_api_key, req.llm_provider),
                 instructions=req.instructions,
             ):
                 yield chunk
@@ -210,6 +216,13 @@ async def get_domains():
     return list_domains()
 
 
+@app.get("/api/providers")
+async def get_providers():
+    """List supported LLM providers."""
+    from agent.providers import get_supported_providers
+    return get_supported_providers()
+
+
 # --- Key management ---
 
 @app.get("/api/keys")
@@ -218,15 +231,15 @@ async def check_keys(user_id: str = Depends(get_user_id)):
     preview = get_user_key_preview(user_id)
     if not preview:
         return {"has_key": False}
-    return {"has_key": True, "preview": preview["key_preview"], "created_at": preview.get("created_at")}
+    return {"has_key": True, "preview": preview["key_preview"], "provider": preview.get("provider", "anthropic"), "created_at": preview.get("created_at")}
 
 
 @app.post("/api/keys")
 async def save_keys(req: SaveKeyRequest, user_id: str = Depends(get_user_id)):
     """Encrypt and save the user's API key."""
-    if not req.anthropic_api_key.startswith("sk-"):
-        raise HTTPException(status_code=400, detail="Invalid API key format")
-    save_user_key(user_id, req.anthropic_api_key)
+    if len(req.anthropic_api_key) < 10:
+        raise HTTPException(status_code=400, detail="Invalid API key")
+    save_user_key(user_id, req.anthropic_api_key, provider=req.provider)
     return {"status": "saved"}
 
 
