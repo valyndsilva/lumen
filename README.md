@@ -2,6 +2,22 @@
 
 An AI research agent that searches the web or your own documents, synthesises sources, and writes structured articles — with a self-improving reflection loop, real-time pipeline visibility, embedding-based RAG, directed refinement, and LLM-as-judge evaluation.
 
+## Agentic Design
+
+Lumen is not a fixed prompt chain — it's an autonomous agent that makes runtime decisions about its own execution path:
+
+1. **It plans** — the Planner generates targeted search queries from the topic
+2. **It acts** — the Searcher calls external APIs (Tavily, PubMed, CourtListener, SEC EDGAR, pgvector) to retrieve real-world evidence
+3. **It observes** — the Summariser extracts facts, the Outliner maps evidence to structure, the Drafter produces a complete article
+4. **It self-evaluates** — the Reflection node critiques the draft on coverage, evidence, structure, and accuracy
+5. **It decides autonomously** — based on that critique, it chooses one of three paths:
+   - **Accept** — draft meets the bar, proceed to scoring
+   - **Revise** — writing issues, loop back to the Drafter with critique (no wasted search calls)
+   - **Research** — content gaps, loop back to the Searcher with targeted gap queries
+6. **It loops** — up to 3 self-correction iterations, accumulating critique and evidence across each pass via `operator.add`
+
+The human doesn't tell the agent which path to take — the Reflection node decides based on the draft quality. With Directed Refinement, the user *can* steer the agent by providing their own critique, but the default mode is fully autonomous. This is the distinction between an agentic system and a prompt chain.
+
 ## Architecture
 
 ```mermaid
